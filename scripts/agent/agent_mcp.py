@@ -27,7 +27,7 @@ INSTRUCTIONS = (
     "Observe with runtime_observe then runtime_snapshot_query. "
     "Diagnose with diagnostics_read and logs_read (severity/domain/q). "
     "Compare authoring vs runtime with runtime_snapshot_query op=compare_authoring. "
-    "Live intervention: runtime_input, optional game_eval (confirm=true), runtime_debug pause/step. "
+    "Live intervention: runtime_input, optional game_eval (confirm=true), runtime_debug pause/step/stack. "
     "Do not curl /eval. Do not sit at debug>. Do not read snapshot JSON via filesystem_manage. "
     "Do not configure an HTTP MCP URL."
 )
@@ -93,7 +93,7 @@ TOOLS = [
     ("appmanifest_manage", "Create/get/list app manifest files."),
     ("runtime_input", "Inject keyboard/mouse into the live engine via control files. Needs project_run mode=live."),
     ("game_eval", "Run a short Lua chunk in the live engine. Off until confirm=true. Do not curl /eval."),
-    ("runtime_debug", "Pause/step/breakpoint via control files. Never sits at debug>. op: status|pause|continue|step|set_breakpoint|clear_breakpoint."),
+    ("runtime_debug", "Pause/step/breakpoint via control files. After a hit, op=stack/locals returns frames and locals. continue resumes. Never sits at debug>."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
@@ -269,7 +269,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "op": {
                 "type": "string",
-                "enum": ["status", "stack", "pause", "continue", "step", "set_breakpoint", "clear_breakpoint"],
+                "enum": ["status", "stack", "locals", "pause", "continue", "step", "set_breakpoint", "clear_breakpoint"],
                 "default": "status",
             },
             "file": {"type": "string", "description": "Script path for breakpoints, e.g. /main/player.script."},
@@ -1256,7 +1256,7 @@ def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             f"Call diagnostics_read. If a snapshot exists, runtime_snapshot_query "
             f"op=compare_authoring id={go_id} collection={collection}. "
             "Use logs_read source=all severity=error for stacks and DEBUG:SCRIPT prints. "
-            "If the game is live, runtime_debug op=status is allowed; do not sit at debug>. "
+            "If the game is live, runtime_debug can set_breakpoint, read op=stack/locals, then continue. Do not sit at debug>. "
             "Do not screenshot unless the user asks how it looks."
         ),
     }

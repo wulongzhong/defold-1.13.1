@@ -137,6 +137,7 @@
  * `DIR/eval.request`, and `DIR/debug.request` each frame. Dump/screenshot
  * write a scene graph or PNG. Input injects HID. Eval runs a short Lua
  * chunk. Debug pause/step/breakpoints never sit at an interactive prompt.
+ * A breakpoint hit captures the Lua stack and locals for later `stack` / `locals`.
  * Replies are `*.ready`. No HTTP. Used by `defold_agent.py` live observe
  * and R3 intervention tools.
  *

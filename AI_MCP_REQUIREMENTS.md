@@ -432,7 +432,7 @@ CLI 拉起的 live 进程由 CLI 管死：`project_stop`、进程退出、工程
 
 - `runtime_input`：键盘 / 鼠标，最多 16 事件、按住最多 30 帧。
 - `game_eval`：默认关，需 `confirm=true` 或 `DEFOLD_AGENT_GAME_EVAL=1`；源码 ≤ 4 KB，禁 os/io/socket，有指令预算。
-- `runtime_debug`：`status` / `pause` / `continue` / `step` / `set_breakpoint` / `clear_breakpoint`。回包 `prompt: false`。禁止停在 `debug>`。
+- `runtime_debug`：`status` / `stack` / `locals` / `pause` / `continue` / `step` / `set_breakpoint` / `clear_breakpoint`。断点命中时抓 Lua 栈和局部变量；之后 `stack`/`status` 仍返回上次抓到的帧。回包带 `frames` / `locals`，`prompt: false`。禁止停在 `debug>`。
 
 ---
 

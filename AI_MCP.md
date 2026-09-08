@@ -648,7 +648,7 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 
 - `runtime_input` / `game_eval` / `runtime_debug` 走 `--agent-control` 文件（`input.request` / `eval.request` / `debug.request`）
 - `game_eval` 默认关（`confirm=true` 或 `DEFOLD_AGENT_GAME_EVAL=1`），源码预算 + 禁 os/io/socket
-- `runtime_debug` 可 pause/step/breakpoint，回包 `prompt: false`，主环不停 `debug>`
+- `runtime_debug` 可 pause/step/breakpoint，断点命中时抓 Lua 栈和 locals；`stack`/`continue` 可读栈并恢复，回包 `prompt: false`，主环不停 `debug>`
 - 不注册编辑器 `POST /eval` 或 mobdebug TCP 为 tool
 
 ### 明确不做（直到引擎有能力）

@@ -695,6 +695,42 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("INVALID_PARAM", bad_key["error"]["code"])
             _, bp = format_debug_request({"op": "set_breakpoint"})
             self.assertEqual("MISSING_PARAM", bp["error"]["code"])
+            stack_body, stack_err = format_debug_request({"op": "stack"})
+            self.assertIsNone(stack_err)
+            self.assertIn("op=stack", stack_body)
+            locals_body, locals_err = format_debug_request({"op": "locals"})
+            self.assertIsNone(locals_err)
+            self.assertIn("op=locals", locals_body)
+
+    def test_parse_debug_ready_stack(self):
+        from agent_intervene import parse_debug_ready
+
+        text = (
+            "OK\n"
+            "op=stack\n"
+            "paused=true\n"
+            "break_file=/main/player.script\n"
+            "break_line=12\n"
+            "breakpoints=1\n"
+            "frames=2\n"
+            "locals=3\n"
+            "stack_reason=breakpoint\n"
+            "--json--\n"
+            '{"frames":[{"depth":0,"file":"/main/player.script","line":12,'
+            '"func":"update","what":"Lua",'
+            '"locals":[{"name":"dt","value":0.016},{"name":"note","value":"a=b"}]},'
+            '{"depth":1,"file":"/main/player.script","line":40,"func":"?",'
+            '"what":"Lua","locals":[{"name":"msg","value":"hash"}]}]}\n'
+        )
+        ok, extra, fields, stack = parse_debug_ready(text)
+        self.assertTrue(ok)
+        self.assertEqual("stack", fields["op"])
+        self.assertEqual("breakpoint", fields["stack_reason"])
+        self.assertNotIn("note", extra)
+        self.assertEqual(2, len(stack["frames"]))
+        self.assertEqual("update", stack["frames"][0]["func"])
+        self.assertEqual(0.016, stack["frames"][0]["locals"][0]["value"])
+        self.assertEqual("a=b", stack["frames"][0]["locals"][1]["value"])
 
     def test_project_doctor_lists_ready_flags(self):
         import tempfile

@@ -2442,6 +2442,9 @@ bail:
     static const uint32_t AGENT_MAX_HOLD_FRAMES = 30;
     static const uint32_t AGENT_MAX_BREAKPOINTS = 16;
     static const uint32_t AGENT_MAX_EVAL_BYTES = 4096;
+    static const uint32_t AGENT_MAX_FRAMES = 8;
+    static const uint32_t AGENT_MAX_LOCALS = 20;
+    static const size_t AGENT_STACK_CAP = 8192;
     static const int AGENT_EVAL_HOOK_COUNT = 20000;
 
     struct AgentKeyHold
@@ -2481,6 +2484,10 @@ bail:
     static char g_AgentLastBreakFile[256];
     static int g_AgentLastBreakLine = 0;
     static bool g_AgentHookInstalled = false;
+    static char g_AgentStackJson[AGENT_STACK_CAP] = "{\"frames\":[]}";
+    static char g_AgentStackReason[32] = "none";
+    static uint32_t g_AgentFrameCount = 0;
+    static uint32_t g_AgentLocalCount = 0;
 
     static void AgentEnsureLineHook(HEngine engine);
 
@@ -2965,6 +2972,195 @@ bail:
         AgentWriteReady(engine->m_AgentControlDir, "eval", ok, result[0] ? result : "nil");
     }
 
+    static void AgentJsonPut(char* buf, size_t cap, size_t* used, const char* s)
+    {
+        if (!s || !used)
+        {
+            return;
+        }
+        size_t n = strlen(s);
+        if (*used + n + 1 >= cap)
+        {
+            n = (*used + 1 < cap) ? (cap - *used - 1) : 0;
+        }
+        if (n > 0)
+        {
+            memcpy(buf + *used, s, n);
+            *used += n;
+        }
+        buf[*used] = 0;
+    }
+
+    static void AgentJsonStr(char* buf, size_t cap, size_t* used, const char* s)
+    {
+        AgentJsonPut(buf, cap, used, "\"");
+        if (!s)
+        {
+            s = "";
+        }
+        for (const unsigned char* p = (const unsigned char*)s; *p && *used + 8 < cap; ++p)
+        {
+            char tmp[8];
+            if (*p == '"' || *p == '\\')
+            {
+                tmp[0] = '\\';
+                tmp[1] = (char)*p;
+                tmp[2] = 0;
+            }
+            else if (*p == '\n')
+            {
+                dmStrlCpy(tmp, "\\n", sizeof(tmp));
+            }
+            else if (*p == '\r')
+            {
+                dmStrlCpy(tmp, "\\r", sizeof(tmp));
+            }
+            else if (*p == '\t')
+            {
+                dmStrlCpy(tmp, "\\t", sizeof(tmp));
+            }
+            else if (*p < 32)
+            {
+                dmSnPrintf(tmp, sizeof(tmp), "\\u%04x", (unsigned int)*p);
+            }
+            else
+            {
+                tmp[0] = (char)*p;
+                tmp[1] = 0;
+            }
+            AgentJsonPut(buf, cap, used, tmp);
+        }
+        AgentJsonPut(buf, cap, used, "\"");
+    }
+
+    static void AgentJsonLuaValue(lua_State* L, int idx, char* buf, size_t cap, size_t* used)
+    {
+        switch (lua_type(L, idx))
+        {
+            case LUA_TNIL:
+                AgentJsonPut(buf, cap, used, "null");
+                return;
+            case LUA_TBOOLEAN:
+                AgentJsonPut(buf, cap, used, lua_toboolean(L, idx) ? "true" : "false");
+                return;
+            case LUA_TNUMBER:
+            {
+                char number[64];
+                dmSnPrintf(number, sizeof(number), "%.14g", lua_tonumber(L, idx));
+                AgentJsonPut(buf, cap, used, number);
+                return;
+            }
+            case LUA_TSTRING:
+            {
+                size_t len = 0;
+                const char* text = lua_tolstring(L, idx, &len);
+                char clipped[121];
+                if (!text)
+                {
+                    AgentJsonStr(buf, cap, used, "");
+                    return;
+                }
+                if (len > 120)
+                {
+                    memcpy(clipped, text, 117);
+                    clipped[117] = '.';
+                    clipped[118] = '.';
+                    clipped[119] = '.';
+                    clipped[120] = 0;
+                    AgentJsonStr(buf, cap, used, clipped);
+                }
+                else
+                {
+                    AgentJsonStr(buf, cap, used, text);
+                }
+                return;
+            }
+            default:
+                AgentJsonStr(buf, cap, used, lua_typename(L, lua_type(L, idx)));
+                return;
+        }
+    }
+
+    static void AgentCaptureStack(lua_State* L)
+    {
+        g_AgentFrameCount = 0;
+        g_AgentLocalCount = 0;
+        size_t used = 0;
+        g_AgentStackJson[0] = 0;
+        AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, "{\"frames\":[");
+        if (!L)
+        {
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, "]}");
+            return;
+        }
+        for (int level = 0; level < (int)AGENT_MAX_FRAMES; ++level)
+        {
+            lua_Debug ar;
+            if (!lua_getstack(L, level, &ar))
+            {
+                break;
+            }
+            lua_getinfo(L, "nSl", &ar);
+            const char* src = ar.source;
+            if (src && (src[0] == '@' || src[0] == '='))
+            {
+                ++src;
+            }
+            if (g_AgentFrameCount > 0)
+            {
+                AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",");
+            }
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, "{\"depth\":");
+            char number[32];
+            dmSnPrintf(number, sizeof(number), "%d", level);
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, number);
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",\"file\":");
+            AgentJsonStr(g_AgentStackJson, AGENT_STACK_CAP, &used, src ? src : "");
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",\"line\":");
+            dmSnPrintf(number, sizeof(number), "%d", ar.currentline);
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, number);
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",\"func\":");
+            AgentJsonStr(g_AgentStackJson, AGENT_STACK_CAP, &used, ar.name ? ar.name : "?");
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",\"what\":");
+            AgentJsonStr(g_AgentStackJson, AGENT_STACK_CAP, &used, ar.what ? ar.what : "");
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",\"locals\":[");
+            uint32_t locals = 0;
+            int n = 1;
+            const char* name = 0x0;
+            while (locals < AGENT_MAX_LOCALS && (name = lua_getlocal(L, &ar, n++)) != 0x0)
+            {
+                if (name[0] == '(')
+                {
+                    lua_pop(L, 1);
+                    continue;
+                }
+                if (locals > 0)
+                {
+                    AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",");
+                }
+                AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, "{\"name\":");
+                AgentJsonStr(g_AgentStackJson, AGENT_STACK_CAP, &used, name);
+                AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, ",\"value\":");
+                AgentJsonLuaValue(L, -1, g_AgentStackJson, AGENT_STACK_CAP, &used);
+                AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, "}");
+                lua_pop(L, 1);
+                locals++;
+                g_AgentLocalCount++;
+            }
+            AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, "]}");
+            g_AgentFrameCount++;
+        }
+        AgentJsonPut(g_AgentStackJson, AGENT_STACK_CAP, &used, "]}");
+        if (g_AgentFrameCount > 0)
+        {
+            dmStrlCpy(g_AgentStackReason, "breakpoint", sizeof(g_AgentStackReason));
+        }
+        else
+        {
+            dmStrlCpy(g_AgentStackReason, "between_frames", sizeof(g_AgentStackReason));
+        }
+    }
+
     static bool AgentFileMatch(const char* source, const char* wanted)
     {
         if (!source || !wanted || !wanted[0])
@@ -3000,6 +3196,7 @@ bail:
                 g_AgentPaused = true;
                 dmStrlCpy(g_AgentLastBreakFile, g_AgentBreakpoints[i].m_File, sizeof(g_AgentLastBreakFile));
                 g_AgentLastBreakLine = ar->currentline;
+                AgentCaptureStack(L);
                 return;
             }
         }
@@ -3034,19 +3231,23 @@ bail:
 
     static void AgentWriteDebugStatus(HEngine engine, bool ok, const char* op)
     {
-        char extra[512];
+        char extra[AGENT_STACK_CAP + 320];
         uint32_t bp = 0;
         for (uint32_t i = 0; i < AGENT_MAX_BREAKPOINTS; ++i)
         {
             if (g_AgentBreakpoints[i].m_Used) bp++;
         }
         dmSnPrintf(extra, sizeof(extra),
-                   "op=%s\npaused=%s\nbreak_file=%s\nbreak_line=%d\nbreakpoints=%u\n",
+                   "op=%s\npaused=%s\nbreak_file=%s\nbreak_line=%d\nbreakpoints=%u\nframes=%u\nlocals=%u\nstack_reason=%s\n--json--\n%s\n",
                    op ? op : "status",
                    g_AgentPaused ? "true" : "false",
                    g_AgentLastBreakFile,
                    g_AgentLastBreakLine,
-                   bp);
+                   bp,
+                   g_AgentFrameCount,
+                   g_AgentLocalCount,
+                   g_AgentStackReason[0] ? g_AgentStackReason : "none",
+                   g_AgentStackJson[0] ? g_AgentStackJson : "{\"frames\":[]}");
         AgentWriteReady(engine->m_AgentControlDir, "debug", ok, extra);
     }
 
@@ -3175,7 +3376,7 @@ bail:
             AgentWriteDebugStatus(engine, true, op);
             return;
         }
-        if (strcmp(op, "status") == 0 || strcmp(op, "stack") == 0)
+        if (strcmp(op, "status") == 0 || strcmp(op, "stack") == 0 || strcmp(op, "locals") == 0)
         {
             AgentWriteDebugStatus(engine, true, op);
             return;

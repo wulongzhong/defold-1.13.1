@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -54,7 +55,16 @@ EVAL_FORBIDDEN = (
     "socket.bind",
     "socket.connect",
 )
-DEBUG_OPS = ("status", "stack", "pause", "continue", "step", "set_breakpoint", "clear_breakpoint")
+DEBUG_OPS = (
+    "status",
+    "stack",
+    "locals",
+    "pause",
+    "continue",
+    "step",
+    "set_breakpoint",
+    "clear_breakpoint",
+)
 
 
 def game_eval_allowed(params: Dict[str, Any]) -> bool:
@@ -200,6 +210,26 @@ def parse_ready_text(text: str) -> Tuple[bool, str, Dict[str, str]]:
     return ok, "\n".join(body_lines), fields
 
 
+def parse_debug_ready(text: str) -> Tuple[bool, str, Dict[str, str], Dict[str, Any]]:
+    raw = text or ""
+    marker = "--json--"
+    if marker in raw:
+        head, json_part = raw.split(marker, 1)
+    else:
+        head, json_part = raw, ""
+    ok, extra, fields = parse_ready_text(head)
+    stack: Dict[str, Any] = {}
+    payload = json_part.strip()
+    if payload:
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            stack = parsed
+    return ok, extra, fields, stack
+
+
 def request_live_control(project: Path, kind: str, body: str, timeout: float = DUMP_WAIT_SEC) -> str:
     directory = control_dir(project)
     directory.mkdir(parents=True, exist_ok=True)
@@ -306,9 +336,13 @@ def runtime_debug(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             "AGENT_CONTROL_TIMEOUT",
             "Live engine did not write debug.ready. Rebuild dmengine with --agent-control.",
         )
-    ok, extra, fields = parse_ready_text(text)
+    ok, extra, fields, stack = parse_debug_ready(text)
     if not ok:
         return error_envelope("INVALID_PARAM", extra or "runtime_debug failed")
+    frames = stack.get("frames") if isinstance(stack.get("frames"), list) else []
+    locals_list: List[Any] = []
+    if frames and isinstance(frames[0], dict) and isinstance(frames[0].get("locals"), list):
+        locals_list = frames[0]["locals"]
     return ok_envelope(
         {
             "source": "runtime",
@@ -317,9 +351,14 @@ def runtime_debug(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             "break_file": fields.get("break_file") or None,
             "break_line": int(fields["break_line"]) if fields.get("break_line") else None,
             "breakpoints": int(fields.get("breakpoints") or 0),
+            "frames": frames,
+            "locals": locals_list,
+            "stack": frames,
+            "frame_count": int(fields.get("frames") or len(frames) or 0),
+            "local_count": int(fields.get("locals") or 0),
+            "stack_reason": fields.get("stack_reason") or ("breakpoint" if frames else "none"),
             "prompt": False,
             "kind": "debug",
-            "detail": extra,
         },
         readiness="running",
     )

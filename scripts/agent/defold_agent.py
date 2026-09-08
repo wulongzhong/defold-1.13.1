@@ -421,7 +421,7 @@ def doctor_payload(project: Path, params: Optional[Dict[str, Any]] = None) -> Di
             ],
             "input": "defold_agent.py input --key left --hold 4",
             "eval": "defold_agent.py eval --code \"return 1+1\" --confirm",
-            "debug": "defold_agent.py debug --op status",
+            "debug": "defold_agent.py debug --op stack",
         },
         "source": "doctor",
         "mcp": {"transport": "stdio", "tools": len(TOOLS), "url": None},
@@ -1110,11 +1110,11 @@ def build_parser() -> argparse.ArgumentParser:
     game_eval_cmd.add_argument("--confirm", action="store_true")
     game_eval_cmd.set_defaults(func=cmd_game_eval)
 
-    runtime_debug_cmd = sub.add_parser("debug", parents=[common], help="Pause/step/breakpoint via control files. Never debug>.")
+    runtime_debug_cmd = sub.add_parser("debug", parents=[common], help="Pause/step/breakpoint/stack via control files. Never debug>.")
     runtime_debug_cmd.add_argument(
         "--op",
         default="status",
-        choices=("status", "stack", "pause", "continue", "step", "set_breakpoint", "clear_breakpoint"),
+        choices=("status", "stack", "locals", "pause", "continue", "step", "set_breakpoint", "clear_breakpoint"),
     )
     runtime_debug_cmd.add_argument("--file")
     runtime_debug_cmd.add_argument("--line", type=int)

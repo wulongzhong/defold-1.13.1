@@ -172,10 +172,11 @@ python .../defold_agent.py eval --code "return go.get_position('/cube')" --confi
 python .../defold_agent.py debug --op pause
 python .../defold_agent.py debug --op step
 python .../defold_agent.py debug --op set_breakpoint --file /main/player.script --line 12
+python .../defold_agent.py debug --op stack
 python .../defold_agent.py debug --op continue
 ```
 
-`runtime_input` writes `input.request` (keyboard / mouse). `game_eval` is off until `confirm=true` or `DEFOLD_AGENT_GAME_EVAL=1`; it is the same class as `/eval` — do not curl `/eval`. `runtime_debug` pause/step/breakpoints never sit at `debug>`.
+`runtime_input` writes `input.request` (keyboard / mouse). `game_eval` is off until `confirm=true` or `DEFOLD_AGENT_GAME_EVAL=1`; it is the same class as `/eval` — do not curl `/eval`. `runtime_debug` pause/step/breakpoints never sit at `debug>`. After a breakpoint hit, `debug --op stack` (or `locals`) returns the last captured Lua frames and locals; `continue` resumes. `op=pause` between frames has no live Lua stack (`stack_reason=between_frames` if nothing was captured yet).
 
 Do not curl the editor as your main protocol; let `defold_agent.py` do that.
 
