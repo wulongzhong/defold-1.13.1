@@ -978,6 +978,41 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                         "source": "disk",
                     }
                 )
+            if op in {"copy", "move"}:
+                src = params.get("path") or params.get("from")
+                dest = params.get("dest") or params.get("to")
+                if not src or not dest:
+                    return error_envelope("MISSING_PARAM", f"{op} needs path and dest")
+                src_path = project_file(project, src)
+                dest_path = project_file(project, dest)
+                src_proj = sanitize_proj_path(str(src))
+                dest_proj = sanitize_proj_path(str(dest))
+                from agent_runtime import is_snapshot_path
+
+                if is_snapshot_path(project, src_path) or is_snapshot_path(project, dest_path):
+                    return error_envelope("NOT_ALLOWED", "Do not copy or move snapshot files.")
+                if dest_proj == "/game.project" or dest_proj.startswith("/.internal/"):
+                    return error_envelope("NOT_ALLOWED", f"Refusing to write {dest_proj}")
+                if op == "move" and (src_proj == "/game.project" or src_proj.startswith("/.internal/")):
+                    return error_envelope("NOT_ALLOWED", f"Refusing to move {src_proj}")
+                if not src_path.is_file():
+                    return error_envelope("NOT_FOUND", f"File not found: {src_proj}")
+                note_file_write(dest_path)
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(src_path.read_bytes())
+                if op == "move":
+                    note_file_write(src_path)
+                    src_path.unlink()
+                return ok_envelope(
+                    {
+                        "path": dest_proj,
+                        "from": src_proj,
+                        "copied": op == "copy",
+                        "moved": op == "move",
+                        "undoable": False,
+                        "source": "disk",
+                    }
+                )
             if op == "delete":
                 path = params.get("path")
                 if not path:
@@ -1028,7 +1063,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             return error_envelope(
                 "UNKNOWN_OP",
                 f"Unknown op: {op}",
-                suggestions=["read_text", "write_text", "list", "delete", "search"],
+                suggestions=["read_text", "write_text", "list", "copy", "move", "delete", "search"],
             )
         if command == "collection_manage":
             op = params.get("op")
@@ -1309,6 +1344,16 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                     f"  }}\n"
                     f"}}\n"
                 )
+            extra = ""
+            if params.get("rotation") is not None:
+                rx, ry, rz, rw = parse_rotation(params.get("rotation"))
+                extra += f"  rotation {{\n    x: {rx}\n    y: {ry}\n    z: {rz}\n    w: {rw}\n  }}\n"
+            if params.get("scale") is not None:
+                sx, sy, sz = parse_scale(params.get("scale"))
+                extra += f"  scale3 {{\n    x: {sx}\n    y: {sy}\n    z: {sz}\n  }}\n"
+            if extra:
+                close_at = block.rfind("}")
+                block = block[:close_at] + extra + block[close_at:]
             if parent:
                 text = add_child_to_parent(text, str(parent), str(go_id))
             _write_text(project, collection, text.rstrip() + block, overwrite=True)
@@ -1576,8 +1621,8 @@ def intercept_existing_http(
                 return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
         if source != "console":
             lines = read_engine_log_lines(project, None)
-            if not lines and got is None and wanted != "engine":
-                return None
+            if not lines and got is None and wanted == "editor":
+                return error_envelope("EDITOR_UNREACHABLE", "logs_read source=editor needs the open editor")
         total = len(lines)
         end = total - offset
         start = max(end - limit, 0)

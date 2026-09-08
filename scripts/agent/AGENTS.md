@@ -101,6 +101,7 @@ python .../defold_agent.py command gameobject_create --params "{\"collection\":\
 python .../defold_agent.py command gameobject_create --params "{\"collection\":\"/main/main.collection\",\"id\":\"hat\",\"parent\":\"cube\"}"
 python .../defold_agent.py command gameobject_manage --params "{\"op\":\"set_property\",\"collection\":\"/main/main.collection\",\"id\":\"cube\",\"property\":\"rotation\",\"value\":90}"
 python .../defold_agent.py command filesystem_manage --params "{\"op\":\"list\",\"path\":\"/\"}"
+python .../defold_agent.py command filesystem_manage --params "{\"op\":\"copy\",\"path\":\"/main/note.txt\",\"dest\":\"/main/note2.txt\"}"
 python .../defold_agent.py create-script --path /main/cube.script
 python .../defold_agent.py patch-script --path /main/cube.script --old "function init(self)" --new "function init(self) -- hi"
 python .../defold_agent.py command collection_manage --params "{\"op\":\"create\",\"path\":\"/main/level.collection\"}"

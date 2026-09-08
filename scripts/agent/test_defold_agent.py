@@ -1031,6 +1031,47 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+            created = dispatch_command(
+                project,
+                "gameobject_create",
+                {
+                    "collection": "/main/main.collection",
+                    "id": "spinner",
+                    "rotation": 90,
+                    "scale": 2,
+                },
+                2,
+            )
+            self.assertEqual("ok", created["status"])
+            spun = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/main/main.collection", "id": "spinner"},
+                2,
+            )
+            self.assertAlmostEqual(0.7071, spun["data"]["properties"]["rotation"][2], places=3)
+            self.assertEqual([2.0, 2.0, 2.0], spun["data"]["properties"]["scale"])
+            (project / "main" / "note.txt").write_text("hi\n", encoding="utf-8")
+            copied = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "copy", "path": "/main/note.txt", "dest": "/main/note2.txt"},
+                2,
+            )
+            self.assertEqual("ok", copied["status"])
+            self.assertTrue((project / "main" / "note2.txt").is_file())
+            moved = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "move", "path": "/main/note2.txt", "dest": "/main/note3.txt"},
+                2,
+            )
+            self.assertEqual("ok", moved["status"])
+            self.assertFalse((project / "main" / "note2.txt").is_file())
+            self.assertTrue((project / "main" / "note3.txt").is_file())
+            logs = dispatch_command(project, "logs_read", {"source": "all"}, 1)
+            self.assertEqual("ok", logs["status"])
+            self.assertEqual([], logs["data"]["lines"])
 
     def test_referenced_go_and_project_stop(self):
         import tempfile

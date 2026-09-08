@@ -426,6 +426,46 @@
                 (double (get v :z (get v "z" 0)))]
       :else (fail! "INVALID_PARAM" (str (name k) " must be [x y z]") nil))))
 
+(defn- rotation-param [params]
+  (let [raw (get params :rotation)]
+    (cond
+      (nil? raw)
+      nil
+
+      (number? raw)
+      (let [half (* 0.5 (Math/toRadians (double raw)))]
+        [0.0 0.0 (Math/sin half) (Math/cos half)])
+
+      (and (sequential? raw) (= 1 (count raw)) (number? (first raw)))
+      (let [half (* 0.5 (Math/toRadians (double (first raw))))]
+        [0.0 0.0 (Math/sin half) (Math/cos half)])
+
+      (and (sequential? raw) (= 4 (count raw)))
+      (mapv double raw)
+
+      (and (sequential? raw) (= 3 (count raw)))
+      (let [half (* 0.5 (Math/toRadians (double (nth raw 2))))]
+        [0.0 0.0 (Math/sin half) (Math/cos half)])
+
+      :else
+      (fail! "INVALID_PARAM" "rotation must be a quaternion [x, y, z, w] or z degrees" nil))))
+
+(defn- scale-param [params]
+  (let [raw (get params :scale)]
+    (cond
+      (nil? raw)
+      nil
+
+      (number? raw)
+      [(double raw) (double raw) (double raw)]
+
+      (and (sequential? raw) (pos? (count raw)))
+      (let [nums (mapv double raw)]
+        (subvec (into nums [1.0 1.0 1.0]) 0 3))
+
+      :else
+      (fail! "INVALID_PARAM" "scale must be a number or [x, y, z]" nil))))
+
 (defn- cmd-editor-state [ctx _params]
   (g/with-auto-evaluation-context evaluation-context
     (let [project (:project ctx)
@@ -526,7 +566,9 @@
         prototype-path (optional-string params :path)
         collection-file (and prototype-path (string/ends-with? prototype-path ".collection"))
         position (vec3-param params :position)
-        instance (capture-created-node
+        rotation (rotation-param params)
+        scale (scale-param params)
+        instance (capture-created-node)
                    (fn [select-fn]
                      (cond
                        collection-file
@@ -549,14 +591,18 @@
 
                        :else
                        (collection/add-embedded-game-object! workspace project collection-node parent select-fn))))]
-    (when (or desired-id position)
+    (when (or desired-id position rotation scale)
       (g/transact
         (concat
           (g/operation-label "Agent: configure game object")
           (when desired-id
             (g/set-property instance :id desired-id))
           (when position
-            (g/set-property instance :position position)))))
+            (g/set-property instance :position position))
+          (when rotation
+            (g/set-property instance :rotation rotation))
+          (when scale
+            (g/set-property instance :scale scale)))))
     {:id (g/node-value instance :id)
      :node_id instance
      :type (if collection-file "collection_instance" "gameobject")
@@ -751,6 +797,33 @@
               acc
               children))))
 
+(defn- filesystem-copy-or-move! [workspace params move]
+  (let [src (sanitize-proj-path (or (optional-string params :path)
+                                   (optional-string params :from)
+                                   (fail! "MISSING_PARAM" "copy/move needs path" nil)))
+        dest (sanitize-proj-path (or (optional-string params :dest)
+                                    (optional-string params :to)
+                                    (fail! "MISSING_PARAM" "copy/move needs dest" nil)))
+        src-file (project-file workspace src)
+        dest-file (project-file workspace dest)]
+    (when (or (= dest "/game.project")
+              (string/starts-with? dest "/.internal/")
+              (string/starts-with? src "/.internal/")
+              (and move (= src "/game.project")))
+      (fail! "NOT_ALLOWED" (str "Refusing to " (if move "move" "copy") " " src " -> " dest) nil))
+    (when-not (.isFile src-file)
+      (fail! "NOT_FOUND" (str "File not found: " src) nil))
+    (if move
+      (fs/move-file! src-file dest-file)
+      (fs/copy-file! src-file dest-file))
+    (workspace/resource-sync! workspace)
+    {:path dest
+     :from src
+     :copied (not move)
+     :moved move
+     :undoable false
+     :source "editor"}))
+
 (defn- cmd-filesystem-manage [ctx params]
   (let [op (require-string params :op)
         workspace (:workspace ctx)
@@ -823,6 +896,8 @@
                   :offset offset
                   :limit limit
                   :truncated (< (+ offset (count page)) (count names))}))
+      "copy" (filesystem-copy-or-move! workspace params false)
+      "move" (filesystem-copy-or-move! workspace params true)
       "delete" (let [path (sanitize-proj-path (require-string params :path))
                      file (project-file workspace path)]
                  (when (or (= path "/game.project")
@@ -836,7 +911,7 @@
                   :deleted true
                   :undoable false
                   :source "editor"})
-      (unknown-op op ["read_text" "write_text" "list" "delete" "search"]))))
+      (unknown-op op ["read_text" "write_text" "list" "copy" "move" "delete" "search"]))))
 
 (defn- cmd-project-manage [ctx params]
   (let [op (require-string params :op)
