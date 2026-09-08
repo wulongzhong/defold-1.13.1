@@ -56,6 +56,7 @@ READ_OPS = {
     "selection_get",
     "settings_get",
     "state",
+    "stop",
 }
 
 ALWAYS_READ_COMMANDS = {

@@ -87,6 +87,7 @@ class DiskCommandTest(unittest.TestCase):
         )
         tree = parse_collection_hierarchy(text, "/main/main.collection")
         self.assertEqual("logo", tree["children"][0]["id"])
+        self.assertEqual("embedded", tree["children"][0]["kind"])
 
     def test_script_create_and_patch_on_disk(self):
         import tempfile
@@ -289,6 +290,8 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertFalse(result["data"]["engine"].get("alive"))
             self.assertEqual("stopped", result["data"]["game_status"]["status"])
             self.assertFalse(result["data"]["game_status"]["helper_live"])
+            self.assertIn("game_project", result["data"]["ready"])
+            self.assertTrue(result["data"]["ready"]["game_project"])
 
     def test_observe_uses_live_handshake(self):
         import json
@@ -790,6 +793,56 @@ class ToolQualityTest(unittest.TestCase):
             blocked = dispatch_command(project, "logs_read", {"source": "editor"}, 1)
             self.assertEqual("error", blocked["status"])
             self.assertEqual("EDITOR_UNREACHABLE", blocked["error"]["code"])
+
+    def test_referenced_go_and_project_stop(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "hero.go").write_text("", encoding="utf-8")
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            created = dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "hero", "path": "/main/hero.go"},
+                2,
+            )
+            self.assertEqual("ok", created["status"])
+            self.assertEqual("referenced", created["data"]["kind"])
+            tree = dispatch_command(
+                project,
+                "collection_get_hierarchy",
+                {"path": "/main/main.collection"},
+                2,
+            )
+            self.assertEqual("referenced", tree["data"]["children"][0]["kind"])
+            self.assertEqual("/main/hero.go", tree["data"]["children"][0]["prototype"])
+            state = dispatch_command(project, "editor_manage", {"op": "state"}, 1)
+            self.assertEqual("ok", state["status"])
+            self.assertIn("ready", state["data"])
+            stopped = dispatch_command(project, "project_manage", {"op": "stop"}, 1)
+            self.assertEqual("error", stopped["status"])
+            self.assertEqual("ENGINE_NOT_RUNNING", stopped["error"]["code"])
+
+    def test_mcp_config_write(self):
+        import tempfile
+        from pathlib import Path
+
+        from defold_agent import build_parser
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            parser = build_parser()
+            args = parser.parse_args(["mcp-config", "--project", str(project), "--write"])
+            self.assertEqual(0, args.func(args))
+            dest = project / ".cursor" / "mcp.json"
+            self.assertTrue(dest.is_file())
+            text = dest.read_text(encoding="utf-8")
+            self.assertIn("defold-agent", text)
+            self.assertNotIn("http://", text)
 
     def test_project_build_does_not_launch(self):
         import tempfile

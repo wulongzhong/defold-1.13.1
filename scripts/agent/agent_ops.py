@@ -515,7 +515,16 @@ def game_status_payload(project: Path) -> Dict[str, Any]:
 
 
 def parse_collection_hierarchy(text: str, path: str) -> Dict[str, Any]:
-    children = [{"id": match, "type": "gameobject"} for match in RE_COLLECTION_ID.findall(text)]
+    children: List[Dict[str, Any]] = []
+    for _start, _end, block in iter_instance_spans(text):
+        ident = first_quoted_id(block)
+        if not ident:
+            continue
+        proto = instance_prototype(block)
+        item: Dict[str, Any] = {"id": ident, "type": "gameobject", "kind": "referenced" if proto else "embedded"}
+        if proto:
+            item["prototype"] = proto
+        children.append(item)
     return {
         "path": path,
         "type": "collection",
@@ -833,30 +842,76 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
         if command == "script_manage" and params.get("op") == "detach":
             return disk_command(project, "component_manage", {**params, "op": "remove"})
         if command == "gameobject_create":
-            path = params.get("collection") or params.get("path")
+            collection = params.get("collection")
+            proto = params.get("path")
+            if proto and str(proto).endswith(".collection"):
+                collection = collection or proto
+                proto = None
+            elif proto and not str(proto).endswith(".go"):
+                proto = None
             go_id = params.get("id") or "go"
-            if not path:
+            if not collection:
                 return error_envelope("MISSING_PARAM", "Missing collection")
             position = params.get("position") or [0, 0, 0]
-            text = _read_text(project, path)
-            if f'id: "{go_id}"' in text:
+            text = _read_text(project, collection)
+            try:
+                find_instance_span(text, str(go_id))
                 return error_envelope("INVALID_PARAM", f"Game object '{go_id}' already exists")
+            except FileNotFoundError:
+                pass
             x, y, z = (list(position) + [0, 0, 0])[:3]
-            block = (
-                f'\nembedded_instances {{\n'
-                f'  id: "{go_id}"\n'
-                f'  data: ""\n'
-                f"  position {{\n"
-                f"    x: {float(x)}\n"
-                f"    y: {float(y)}\n"
-                f"    z: {float(z)}\n"
-                f"  }}\n"
-                f"}}\n"
-            )
-            _write_text(project, path, text.rstrip() + block, overwrite=True)
-            return ok_envelope({"id": go_id, "undoable": False, "source": "disk"})
+            if proto:
+                proto = sanitize_proj_path(str(proto))
+                block = (
+                    f'\ninstances {{\n'
+                    f'  id: "{go_id}"\n'
+                    f'  prototype: "{proto}"\n'
+                    f"  position {{\n"
+                    f"    x: {float(x)}\n"
+                    f"    y: {float(y)}\n"
+                    f"    z: {float(z)}\n"
+                    f"  }}\n"
+                    f"}}\n"
+                )
+            else:
+                block = (
+                    f'\nembedded_instances {{\n'
+                    f'  id: "{go_id}"\n'
+                    f'  data: ""\n'
+                    f"  position {{\n"
+                    f"    x: {float(x)}\n"
+                    f"    y: {float(y)}\n"
+                    f"    z: {float(z)}\n"
+                    f"  }}\n"
+                    f"}}\n"
+                )
+            _write_text(project, collection, text.rstrip() + block, overwrite=True)
+            data = {"id": go_id, "undoable": False, "source": "disk"}
+            if proto:
+                data["prototype"] = proto
+                data["kind"] = "referenced"
+            else:
+                data["kind"] = "embedded"
+            return ok_envelope(data)
+        if command == "editor_manage":
+            op = params.get("op")
+            if op == "state":
+                return disk_command(project, "editor_state", params)
+            if op == "selection_get":
+                return ok_envelope({"selection": [], "source": "disk"}, readiness="no_editor")
+            if op == "quit":
+                return error_envelope(
+                    "EDITOR_UNREACHABLE",
+                    "quit needs the open editor",
+                    "Agents should leave the editor running.",
+                )
+            return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["state", "selection_get", "quit"])
         if command == "project_manage":
             op = params.get("op")
+            if op == "stop":
+                from agent_runtime import stop_live_engine
+
+                return stop_live_engine(project)
             game_project = project / "game.project"
             if not game_project.is_file():
                 return error_envelope("NOT_FOUND", "/game.project was not found")
@@ -910,6 +965,7 @@ DISK_COMMANDS = [
     "collection_save",
     "component_add",
     "component_manage",
+    "editor_manage",
     "editor_state",
     "filesystem_manage",
     "font_manage",
@@ -1166,6 +1222,11 @@ def dispatch_command(
     blocked = reject_write_if_gated(project, command, params)
     if blocked is not None:
         return blocked
+    if command == "project_manage" and params.get("op") == "stop":
+        from agent_runtime import live_status, stop_live_engine
+
+        if live_status(project).get("alive") or read_editor_endpoint(project) is None:
+            return overlay_readiness(project, stop_live_engine(project))
     if command == "batch_execute":
         return batch_execute_commands(project, params, timeout)
     if command == "session_activate" and params.get("url"):
@@ -1200,9 +1261,12 @@ def dispatch_command(
     else:
         editor = editor_command(project, command, params, timeout)
         result = editor if editor is not None else disk_command(project, command, params)
-    if command == "editor_state" and result.get("status") == "ok" and isinstance(result.get("data"), dict):
-        from agent_runtime import live_status
+    if command in {"editor_state", "editor_manage"} and result.get("status") == "ok" and isinstance(result.get("data"), dict):
+        if command == "editor_state" or params.get("op") == "state":
+            from agent_runtime import live_status
+            from defold_agent import doctor_payload
 
-        result["data"]["engine"] = live_status(project)
-        result["data"]["game_status"] = game_status_payload(project)
+            result["data"]["engine"] = live_status(project)
+            result["data"]["game_status"] = game_status_payload(project)
+            result["data"]["ready"] = doctor_payload(project).get("ready") or {}
     return overlay_readiness(project, result)

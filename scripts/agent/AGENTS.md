@@ -111,6 +111,7 @@ stdio MCP (this CLI, no plugin, no HTTP URL):
 python .../defold_agent.py mcp
 python .../defold_agent.py mcp --exclude-domains atlas,tilemap
 python .../defold_agent.py mcp-config --format cursor
+python .../defold_agent.py mcp-config --write --project <dir>
 ```
 
 Sample Cursor config: `scripts/agent/examples/cursor.mcp.json`. Clients should use `command` + `args`, never `url = "http://..."`. Resources (`defold://editor/state`, `defold://collection/hierarchy?path=...`, `defold://runtime/snapshot/{id}`, …) and prompts (`defold-observe`, `defold-live`) are on the same stdio server.

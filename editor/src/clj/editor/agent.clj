@@ -92,7 +92,7 @@
    "scene_save" "collection_save"})
 
 (def ^:private read-ops
-  #{"find" "get" "get_roots" "list" "read" "read_text" "search" "selection_get" "settings_get" "state"})
+  #{"find" "get" "get_roots" "list" "read" "read_text" "search" "selection_get" "settings_get" "state" "stop"})
 
 (def ^:private always-read-commands
   #{"api_manage"
@@ -720,20 +720,26 @@
                           :undoable false})))
       "search" (let [query (require-string params :query)
                      ext (optional-string params :ext)
-                     files (collect-project-files root #{".internal" "build" ".git"} [])]
-                 {:matches
-                  (into []
-                        (comp
-                          (filter (fn [^File file]
-                                    (or (nil? ext)
-                                        (string/ends-with? (.getName file) (str "." ext)))))
-                          (keep (fn [^File file]
-                                  (when (< (.length file) 1000000)
-                                    (let [text (slurp file)]
-                                      (when (string/includes? text query)
-                                        (resource/file->proj-path root file))))))
-                          (take 100))
-                        files)})
+                     offset (or (get params :offset) 0)
+                     limit (or (get params :limit) 100)
+                     files (collect-project-files root #{".internal" "build" ".git"} [])
+                     matches (into []
+                                   (comp
+                                     (filter (fn [^File file]
+                                               (or (nil? ext)
+                                                   (string/ends-with? (.getName file) (str "." ext)))))
+                                     (keep (fn [^File file]
+                                             (when (< (.length file) 1000000)
+                                               (let [text (slurp file)]
+                                                 (when (string/includes? text query)
+                                                   (resource/file->proj-path root file)))))))
+                                   files)
+                     page (into [] (comp (drop offset) (take limit)) matches)]
+                 {:matches page
+                  :total (count matches)
+                  :offset offset
+                  :limit limit
+                  :truncated (< (+ offset (count page)) (count matches))})
       (unknown-op op ["read_text" "write_text" "search"]))))
 
 (defn- cmd-project-manage [ctx params]

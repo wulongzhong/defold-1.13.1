@@ -989,8 +989,15 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 def cmd_mcp_config(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve() if args.project else None
     text = mcp_client_config(Path(__file__), project, args.format, exclude_domains=args.exclude_domains)
+    dest = None
     if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
+        dest = Path(args.out)
+    elif getattr(args, "write", False):
+        root = project or Path.cwd()
+        dest = root / ".cursor" / "mcp.json" if args.format == "cursor" else root / ".codex" / "mcp.toml"
+    if dest:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(text, encoding="utf-8")
     sys.stdout.write(text)
     return 0
 
@@ -1163,6 +1170,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--exclude-domains",
         default=os.environ.get("DEFOLD_MCP_EXCLUDE_DOMAINS"),
         help="Copied into the printed command args.",
+    )
+    mcp_config.add_argument(
+        "--write",
+        action="store_true",
+        help="Write Cursor/Codex config to --out or <project>/.cursor/mcp.json (never an HTTP URL).",
     )
     mcp_config.set_defaults(func=cmd_mcp_config)
     return parser
