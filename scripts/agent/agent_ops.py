@@ -219,7 +219,7 @@ def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optio
             go_text = ""
     else:
         go_text = decode_data_field(block) or ""
-    return {
+    payload = {
         "id": go_id,
         "path": path,
         "source": "disk",
@@ -227,7 +227,12 @@ def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optio
         "prototype": proto,
         "components": list_component_ids(go_text),
         "properties": properties,
+        "children": instance_children(block),
     }
+    parent = find_parent_id(text, go_id)
+    if parent:
+        payload["parent"] = parent
+    return payload
 
 
 RE_INSTANCE_HEADER = re.compile(r"(?:embedded_instances|instances|collection_instances)\s*\{")
@@ -398,16 +403,67 @@ def replace_instance_block(text: str, go_id: str, new_block: str) -> str:
     return text[:start] + new_block + text[end:]
 
 
+def instance_kind(block: str) -> str:
+    return block.lstrip().split("{", 1)[0].strip()
+
+
+def instance_children(block: str) -> List[str]:
+    return re.findall(r'(?m)^[ \t]*children:\s*"([^"]+)"', block)
+
+
+def find_parent_id(text: str, go_id: str) -> Optional[str]:
+    for _start, _end, block in iter_instance_spans(text):
+        if go_id in instance_children(block):
+            return first_quoted_id(block)
+    return None
+
+
+def strip_child_refs(text: str, child_id: str) -> str:
+    return re.sub(rf'(?m)^[ \t]*children:\s*"{re.escape(child_id)}"\s*\n?', "", text)
+
+
+def rewrite_child_refs(text: str, old_id: str, new_id: str) -> str:
+    return re.sub(
+        rf'(?m)^([ \t]*children:\s*"){re.escape(old_id)}(")',
+        rf"\1{new_id}\2",
+        text,
+    )
+
+
+def add_child_to_parent(text: str, parent_id: str, child_id: str) -> str:
+    start, end, block = find_instance_span(text, parent_id)
+    if instance_kind(block) == "collection_instances":
+        raise ValueError("Parent must be a game object instance, not a collection instance")
+    if child_id in instance_children(block):
+        return text
+    line = f'  children: "{child_id}"\n'
+    last_child = None
+    for match in re.finditer(r'(?m)^[ \t]*children:\s*"[^"]+"[ \t]*\n?', block):
+        last_child = match
+    if last_child is not None:
+        insert_at = last_child.end()
+        new_block = block[:insert_at] + line + block[insert_at:]
+    else:
+        proto = re.search(r'(prototype:\s*"[^"]+"\s*\n)', block)
+        ident = re.search(r'(id:\s*"[^"]+"\s*\n)', block)
+        anchor = proto or ident
+        if anchor is None:
+            raise ValueError("Parent instance has no id")
+        new_block = block[: anchor.end()] + line + block[anchor.end() :]
+    return text[:start] + new_block + text[end:]
+
+
 def replace_instance_id(text: str, old_id: str, new_id: str) -> str:
     start, end, block = find_instance_span(text, old_id)
     if f'id: "{new_id}"' in text and new_id != old_id:
         raise ValueError(f"Game object '{new_id}' already exists")
-    return text[:start] + block.replace(f'id: "{old_id}"', f'id: "{new_id}"', 1) + text[end:]
+    renamed = text[:start] + block.replace(f'id: "{old_id}"', f'id: "{new_id}"', 1) + text[end:]
+    return rewrite_child_refs(renamed, old_id, new_id)
 
 
 def remove_instance_block(text: str, go_id: str) -> str:
     start, end, _block = find_instance_span(text, go_id)
-    return text[:start] + text[end:]
+    return strip_child_refs(text[:start] + text[end:], go_id)
 
 
 def set_position_in_block(block: str, value: Any) -> str:
@@ -557,8 +613,9 @@ def parse_collection_hierarchy(text: str, path: str) -> Dict[str, Any]:
         if not ident:
             continue
         proto = instance_prototype(block)
-        header = block.lstrip().split("{", 1)[0].strip()
+        header = instance_kind(block)
         nested = re.search(r'(?:^|\n)\s*collection:\s*"([^"]+)"', block)
+        kids = instance_children(block)
         if header == "collection_instances":
             item = {
                 "id": ident,
@@ -571,7 +628,17 @@ def parse_collection_hierarchy(text: str, path: str) -> Dict[str, Any]:
             item = {"id": ident, "type": "gameobject", "kind": "referenced" if proto else "embedded"}
             if proto:
                 item["prototype"] = proto
+        if kids:
+            item["children"] = kids
         children.append(item)
+    child_to_parent: Dict[str, str] = {}
+    for item in children:
+        for kid in item.get("children") or []:
+            child_to_parent[kid] = item["id"]
+    for item in children:
+        parent = child_to_parent.get(item["id"])
+        if parent:
+            item["parent"] = parent
     return {
         "path": path,
         "type": "collection",
@@ -1020,6 +1087,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             elif proto and not str(proto).endswith(".go"):
                 proto = None
             go_id = params.get("id") or "go"
+            parent = params.get("parent")
             if not collection:
                 return error_envelope("MISSING_PARAM", "Missing collection")
             position = params.get("position") or [0, 0, 0]
@@ -1029,6 +1097,21 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 return error_envelope("INVALID_PARAM", f"Game object '{go_id}' already exists")
             except FileNotFoundError:
                 pass
+            if parent:
+                if nested_collection:
+                    return error_envelope(
+                        "INVALID_PARAM",
+                        "Nested collection instances cannot have a parent game object",
+                    )
+                try:
+                    _start, _end, parent_block = find_instance_span(text, str(parent))
+                except FileNotFoundError:
+                    return error_envelope("NOT_FOUND", f"Parent '{parent}' was not found")
+                if instance_kind(parent_block) == "collection_instances":
+                    return error_envelope(
+                        "INVALID_PARAM",
+                        "Parent must be a game object instance, not a collection instance",
+                    )
             x, y, z = (list(position) + [0, 0, 0])[:3]
             if nested_collection:
                 block = (
@@ -1067,8 +1150,12 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                     f"  }}\n"
                     f"}}\n"
                 )
+            if parent:
+                text = add_child_to_parent(text, str(parent), str(go_id))
             _write_text(project, collection, text.rstrip() + block, overwrite=True)
             data = {"id": go_id, "undoable": False, "source": "disk"}
+            if parent:
+                data["parent"] = parent
             if nested_collection:
                 data["kind"] = "collection_instance"
                 data["collection"] = nested_collection

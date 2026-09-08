@@ -872,6 +872,73 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("error", blocked["status"])
             self.assertEqual("EDITOR_UNREACHABLE", blocked["error"]["code"])
 
+    def test_gameobject_parent_on_disk(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            missing = dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "hat", "parent": "nope"},
+                2,
+            )
+            self.assertEqual("NOT_FOUND", missing["error"]["code"])
+            child = dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "hat", "parent": "cube"},
+                2,
+            )
+            self.assertEqual("ok", child["status"])
+            self.assertEqual("cube", child["data"]["parent"])
+            text = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertIn('children: "hat"', text)
+            tree = dispatch_command(
+                project,
+                "collection_get_hierarchy",
+                {"path": "/main/main.collection"},
+                2,
+            )
+            by_id = {item["id"]: item for item in tree["data"]["children"]}
+            self.assertEqual(["hat"], by_id["cube"]["children"])
+            self.assertEqual("cube", by_id["hat"]["parent"])
+            props = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/main/main.collection", "id": "hat"},
+                2,
+            )
+            self.assertEqual("cube", props["data"]["parent"])
+            renamed = dispatch_command(
+                project,
+                "gameobject_manage",
+                {"op": "rename", "collection": "/main/main.collection", "id": "hat", "name": "cap"},
+                2,
+            )
+            self.assertEqual("ok", renamed["status"])
+            text = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertIn('children: "cap"', text)
+            self.assertNotIn('children: "hat"', text)
+            dispatch_command(
+                project,
+                "gameobject_manage",
+                {"op": "delete", "collection": "/main/main.collection", "id": "cap"},
+                2,
+            )
+            text = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertNotIn('children: "cap"', text)
+            self.assertIn('id: "cube"', text)
+
     def test_referenced_go_and_project_stop(self):
         import tempfile
         from pathlib import Path
