@@ -125,6 +125,14 @@
         language-pred (conj language-pred)
         q-pred (conj q-pred)))))
 
+(defn search-ref
+  "Return script-doc elements matching a /ref query string.
+
+  The query uses the same shape as GET /ref: `q=go.property`, plus optional
+  `environment=` and `language=` fields joined by `&`."
+  [query]
+  (filterv (query-string->element-predicate (or query "")) @ref-index))
+
 (defn- get-ref
   {:openapi
    {:summary "Runtime and editor API reference"
@@ -144,7 +152,7 @@
                        :content {"application/json" {}}}}}}
   [request]
   (http-server/json-response
-    (filterv (query-string->element-predicate (:query request "")) @ref-index)))
+    (search-ref (:query request ""))))
 
 (defn routes []
   {"/ref" {"GET" #'get-ref}})

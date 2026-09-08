@@ -19,6 +19,7 @@
             [clojure.string :as string]
             [clojure.test :refer :all]
             [dynamo.graph :as g]
+            [editor.agent :as agent]
             [editor.code.view :as view]
             [editor.command-requests :as command-requests]
             [editor.console :as console]
@@ -300,7 +301,12 @@
                                              (bob/routes project)
                                              (scene/routes project app-view)
                                              (command-requests/router root test-util/localization progress/null-render-progress!)
-                                             (doc/routes)])))]
+                                             (doc/routes)
+                                             (agent/routes {:project project
+                                                            :workspace workspace
+                                                            :app-view app-view
+                                                            :localization test-util/localization
+                                                            :token "test-token"})])))
           (let [url (http-server/local-url server)]
             (let [{:keys [status headers body]} @(http/request (str url "/") :as :string)]
               (is (= 200 status))
@@ -317,6 +323,8 @@
                 (is (contains? (get json-body "paths") "/console"))
                 (is (contains? (get json-body "paths") "/console/stream"))
                 (is (contains? (get json-body "paths") "/preview/{path}"))
+                (is (contains? (get json-body "paths") "/agent/command"))
+                (is (contains? (get json-body "paths") "/agent/state"))
                 (let [get-ref (get-in json-body ["paths" "/ref" "get"])
                       param-names (into #{} (map #(get % "name")) (get get-ref "parameters"))]
                   (is get-ref)

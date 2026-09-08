@@ -185,6 +185,11 @@ namespace dmEngine
         void*                                       m_DependenciesJsonResource;
         uint32_t                                    m_DependenciesJsonSize;
         uint8_t                                     m_GuiSafeAreaMode;
+
+        // Agent / CLI automation (Godot --quit-after / --write-movie / --debug-collisions)
+        uint32_t                                    m_QuitAfterFrames;
+        bool                                        m_DebugCollisions;
+        char                                        m_ScreenshotPath[1024];
     };
 
 

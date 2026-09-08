@@ -30,6 +30,8 @@
 #include <sys/stat.h>
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <crash/crash.h>
 #include <dlib/buffer.h>
@@ -48,6 +50,7 @@
 #include <dlib/sys.h>
 #include <dlib/thread.h>
 #include <dlib/time.h>
+#include <dlib/zlib.h>
 #include <graphics/graphics.h>
 #include <extension/extension.h>
 #include <extension/extension.hpp>
@@ -430,10 +433,13 @@ namespace dmEngine
     , m_Height(640)
     , m_InvPhysicalWidth(1.0f/960)
     , m_InvPhysicalHeight(1.0f/640)
-    , m_ThrottleCooldownMax(0.0f)
-    , m_ThrottleCooldown(0.0f)
-    , m_ThrottleEnabled(false)
+        , m_ThrottleCooldownMax(0.0f)
+        , m_ThrottleCooldown(0.0f)
+        , m_ThrottleEnabled(false)
+        , m_QuitAfterFrames(0)
+        , m_DebugCollisions(false)
     {
+        m_ScreenshotPath[0] = 0;
         m_EngineService = engine_service;
         m_Register = dmGameObject::NewRegister();
         m_InputBuffer.SetCapacity(64);
@@ -1045,6 +1051,9 @@ namespace dmEngine
         const char validation_layers_support_arg[] = "--use-validation-layers";
         const char verbose_long[] = "--verbose";
         const char verbose_short[] = "-v";
+        const char quit_after_frames_arg[] = "--quit-after-frames=";
+        const char screenshot_arg[] = "--screenshot=";
+        const char debug_collisions_arg[] = "--debug-collisions";
         for (int i = 0; i < argc; ++i)
         {
             const char* arg = argv[i];
@@ -1068,6 +1077,37 @@ namespace dmEngine
             {
                 dmLogSetLevel(LOG_SEVERITY_DEBUG);
             }
+            else if (strncmp(quit_after_frames_arg, arg, sizeof(quit_after_frames_arg)-1) == 0)
+            {
+                const char* value = arg + sizeof(quit_after_frames_arg) - 1;
+                int frames = atoi(value);
+                if (frames > 0)
+                {
+                    engine->m_QuitAfterFrames = (uint32_t)frames;
+                }
+                else
+                {
+                    dmLogWarning("Invalid value used for %s%s.", quit_after_frames_arg, value);
+                }
+            }
+            else if (strncmp(screenshot_arg, arg, sizeof(screenshot_arg)-1) == 0)
+            {
+                const char* value = arg + sizeof(screenshot_arg) - 1;
+                if (value[0])
+                {
+                    dmStrlCpy(engine->m_ScreenshotPath, value, sizeof(engine->m_ScreenshotPath));
+                }
+            }
+            else if (strcmp(debug_collisions_arg, arg) == 0)
+            {
+                engine->m_DebugCollisions = true;
+            }
+        }
+
+        // One-shot capture: --screenshot without a frame budget still exits after the first presented frame.
+        if (engine->m_ScreenshotPath[0] && engine->m_QuitAfterFrames == 0)
+        {
+            engine->m_QuitAfterFrames = 1;
         }
 
         dmBuffer::NewContext();
@@ -1551,6 +1591,12 @@ namespace dmEngine
         debug_callbacks.m_InvScale = 1.0f / physics_params.m_Scale;
         debug_callbacks.m_DebugScale = dmConfigFile::GetFloat(engine->m_Config, "physics.debug_scale", 30.0f);
 
+        if (engine->m_DebugCollisions)
+        {
+            engine->m_PhysicsContextBox2D.m_BaseContext.m_Debug = true;
+            engine->m_PhysicsContextBullet3D.m_BaseContext.m_Debug = true;
+        }
+
         if (engine->m_PhysicsContextBox2D.m_Context)
         {
             dmPhysics::SetDebugCallbacks2D(engine->m_PhysicsContextBox2D.m_Context, debug_callbacks);
@@ -1951,6 +1997,284 @@ bail:
         engine->m_RunResult.m_Action = dmEngine::RunResult::EXIT;
     }
 
+    static uint32_t PngCrc32Update(uint32_t crc, const uint8_t* data, uint32_t size)
+    {
+        for (uint32_t i = 0; i < size; ++i)
+        {
+            crc ^= data[i];
+            for (int bit = 0; bit < 8; ++bit)
+            {
+                uint32_t mask = (uint32_t)-(int32_t)(crc & 1u);
+                crc = (crc >> 1) ^ (0xEDB88320u & mask);
+            }
+        }
+        return crc;
+    }
+
+    static uint32_t PngCrc32(const uint8_t* data, uint32_t size)
+    {
+        return ~PngCrc32Update(0xFFFFFFFFu, data, size);
+    }
+
+    static void WritePngU32be(uint8_t* dst, uint32_t value)
+    {
+        dst[0] = (uint8_t)((value >> 24) & 0xffu);
+        dst[1] = (uint8_t)((value >> 16) & 0xffu);
+        dst[2] = (uint8_t)((value >> 8) & 0xffu);
+        dst[3] = (uint8_t)(value & 0xffu);
+    }
+
+    struct PngDeflateContext
+    {
+        uint8_t* m_Data;
+        uint32_t m_Size;
+        uint32_t m_Capacity;
+        bool     m_Ok;
+    };
+
+    static bool PngDeflateWriter(void* context, const void* data, uint32_t data_len)
+    {
+        PngDeflateContext* ctx = (PngDeflateContext*)context;
+        if (!ctx->m_Ok)
+        {
+            return false;
+        }
+        if (ctx->m_Size + data_len > ctx->m_Capacity)
+        {
+            uint32_t new_capacity = ctx->m_Capacity ? ctx->m_Capacity : 4096;
+            while (ctx->m_Size + data_len > new_capacity)
+            {
+                new_capacity *= 2;
+            }
+            uint8_t* resized = (uint8_t*)realloc(ctx->m_Data, new_capacity);
+            if (!resized)
+            {
+                ctx->m_Ok = false;
+                return false;
+            }
+            ctx->m_Data = resized;
+            ctx->m_Capacity = new_capacity;
+        }
+        memcpy(ctx->m_Data + ctx->m_Size, data, data_len);
+        ctx->m_Size += data_len;
+        return true;
+    }
+
+    static void EnsureParentDirectories(const char* path)
+    {
+        char tmp[DMPATH_MAX_PATH];
+        dmStrlCpy(tmp, path, sizeof(tmp));
+        char* last_sep = 0;
+        for (char* p = tmp; *p; ++p)
+        {
+            if (*p == '/' || *p == '\\')
+            {
+                last_sep = p;
+            }
+        }
+        if (!last_sep)
+        {
+            return;
+        }
+        *last_sep = 0;
+
+        char accum[DMPATH_MAX_PATH];
+        accum[0] = 0;
+        const char* p = tmp;
+        if (((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':')
+        {
+            accum[0] = p[0];
+            accum[1] = ':';
+            accum[2] = 0;
+            p += 2;
+            if (*p == '/' || *p == '\\')
+            {
+                dmStrlCat(accum, "/", sizeof(accum));
+                ++p;
+            }
+        }
+        else if (*p == '/' || *p == '\\')
+        {
+            dmStrlCpy(accum, "/", sizeof(accum));
+            ++p;
+        }
+
+        while (*p)
+        {
+            while (*p == '/' || *p == '\\')
+            {
+                ++p;
+            }
+            if (!*p)
+            {
+                break;
+            }
+            const char* start = p;
+            while (*p && *p != '/' && *p != '\\')
+            {
+                ++p;
+            }
+            if (accum[0] && accum[strlen(accum) - 1] != '/' && accum[strlen(accum) - 1] != '\\')
+            {
+                dmStrlCat(accum, "/", sizeof(accum));
+            }
+            size_t used = strlen(accum);
+            size_t component_len = (size_t)(p - start);
+            if (used + component_len + 1 < sizeof(accum))
+            {
+                memcpy(accum + used, start, component_len);
+                accum[used + component_len] = 0;
+            }
+            if (accum[0] && !dmSys::Exists(accum))
+            {
+                dmSys::Mkdir(accum, 0755);
+            }
+        }
+    }
+
+    static bool WriteRgbaPng(const char* path, const uint8_t* rgba, uint32_t width, uint32_t height)
+    {
+        if (!path || !path[0] || !rgba || width == 0 || height == 0)
+        {
+            return false;
+        }
+
+        const uint32_t stride = width * 4;
+        const uint32_t raw_size = height * (1 + stride);
+        uint8_t* raw = (uint8_t*)malloc(raw_size);
+        if (!raw)
+        {
+            return false;
+        }
+        for (uint32_t y = 0; y < height; ++y)
+        {
+            uint8_t* row = raw + y * (1 + stride);
+            row[0] = 0;
+            memcpy(row + 1, rgba + y * stride, stride);
+        }
+
+        PngDeflateContext deflate = {};
+        deflate.m_Ok = true;
+        dmZlib::Result zr = dmZlib::DeflateBuffer(raw, raw_size, 6, &deflate, PngDeflateWriter);
+        free(raw);
+        if (zr != dmZlib::RESULT_OK || !deflate.m_Ok || !deflate.m_Data)
+        {
+            free(deflate.m_Data);
+            return false;
+        }
+
+        EnsureParentDirectories(path);
+        FILE* file = fopen(path, "wb");
+        if (!file)
+        {
+            free(deflate.m_Data);
+            return false;
+        }
+
+        const uint8_t signature[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+        fwrite(signature, 1, sizeof(signature), file);
+
+        uint8_t ihdr[17];
+        memcpy(ihdr, "IHDR", 4);
+        WritePngU32be(ihdr + 4, width);
+        WritePngU32be(ihdr + 8, height);
+        ihdr[12] = 8;
+        ihdr[13] = 6;
+        ihdr[14] = 0;
+        ihdr[15] = 0;
+        ihdr[16] = 0;
+        uint8_t len[4];
+        WritePngU32be(len, 13);
+        fwrite(len, 1, 4, file);
+        fwrite(ihdr, 1, 17, file);
+        uint32_t crc = PngCrc32(ihdr, 17);
+        WritePngU32be(len, crc);
+        fwrite(len, 1, 4, file);
+
+        WritePngU32be(len, deflate.m_Size);
+        fwrite(len, 1, 4, file);
+        fwrite("IDAT", 1, 4, file);
+        fwrite(deflate.m_Data, 1, deflate.m_Size, file);
+        crc = PngCrc32Update(0xFFFFFFFFu, (const uint8_t*)"IDAT", 4);
+        crc = ~PngCrc32Update(crc, deflate.m_Data, deflate.m_Size);
+        WritePngU32be(len, crc);
+        fwrite(len, 1, 4, file);
+        free(deflate.m_Data);
+
+        WritePngU32be(len, 0);
+        fwrite(len, 1, 4, file);
+        fwrite("IEND", 1, 4, file);
+        crc = PngCrc32((const uint8_t*)"IEND", 4);
+        WritePngU32be(len, crc);
+        fwrite(len, 1, 4, file);
+
+        bool ok = ferror(file) == 0;
+        fclose(file);
+        return ok;
+    }
+
+    static bool CaptureScreenshot(HEngine engine, const char* path)
+    {
+        if (!engine->m_GraphicsContext || !path || !path[0])
+        {
+            return false;
+        }
+
+        int32_t x = 0, y = 0;
+        uint32_t width = 0, height = 0;
+        dmGraphics::GetViewport(engine->m_GraphicsContext, &x, &y, &width, &height);
+        if (width == 0 || height == 0)
+        {
+            return false;
+        }
+
+        uint32_t buffer_size = width * height * 4;
+        uint8_t* pixels = (uint8_t*)malloc(buffer_size);
+        if (!pixels)
+        {
+            return false;
+        }
+
+        dmGraphics::ReadPixels(engine->m_GraphicsContext, x, y, width, height, pixels, buffer_size);
+        for (uint32_t i = 0; i < width * height; ++i)
+        {
+            uint8_t b = pixels[i * 4 + 0];
+            uint8_t r = pixels[i * 4 + 2];
+            pixels[i * 4 + 0] = r;
+            pixels[i * 4 + 2] = b;
+        }
+
+        bool ok = WriteRgbaPng(path, pixels, width, height);
+        free(pixels);
+        if (ok)
+        {
+            dmLogInfo("Wrote screenshot to '%s' (%ux%u)", path, width, height);
+        }
+        else
+        {
+            dmLogError("Failed to write screenshot '%s'", path);
+        }
+        return ok;
+    }
+
+    static void MaybeQuitAfterFrames(HEngine engine)
+    {
+        if (engine->m_QuitAfterFrames == 0 || engine->m_Stats.m_FrameCount < engine->m_QuitAfterFrames)
+        {
+            return;
+        }
+
+        int32_t exit_code = 0;
+        if (engine->m_ScreenshotPath[0])
+        {
+            if (!CaptureScreenshot(engine, engine->m_ScreenshotPath))
+            {
+                exit_code = 1;
+            }
+        }
+        Exit(engine, exit_code);
+    }
+
     // Return true if the frame should be skipped
     static bool UpdateFrameThrottle(HEngine engine, float dt, bool has_input)
     {
@@ -2288,6 +2612,7 @@ bail:
 
         ++engine->m_Stats.m_FrameCount;
         engine->m_Stats.m_TotalTime += dt;
+        MaybeQuitAfterFrames(engine);
     }
 
     static void CalcTimeStep(HEngine engine, float& step_dt, uint32_t& num_steps)

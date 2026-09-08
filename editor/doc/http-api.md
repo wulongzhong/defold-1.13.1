@@ -49,3 +49,33 @@ http://localhost:[port]/openapi.json
 ```
 
 Use this document as the source of truth for the currently available API operations, including their request and response schemas.
+
+### Agent-oriented commands
+
+`POST /command/check` compiles the open project and returns `{success, issues[]}` **without launching the game**. Use this as the Defold equivalent of Godot `--check-only`.
+
+`POST /command/build` still builds **and runs**. Agents that only want diagnostics should call `check`.
+
+The repo CLI `scripts/agent/defold_agent.py` wraps these endpoints plus `bob` / `dmengine` so Codex does not curl the editor as its client protocol. See `scripts/agent/AGENTS.md`.
+
+### First-party agent commands
+
+`POST /agent/command` (Bearer) is the editor-source command surface for hierarchy, game-object create, component add, script patch, filesystem, and the manage ops. It is **not** a game plugin.
+
+Request:
+
+```json
+{"command": "gameobject_create", "params": {"collection": "/main/main.collection", "id": "cube"}}
+```
+
+Response is always HTTP 200 for business results:
+
+```json
+{"status": "ok", "readiness": "ready", "data": {"id": "cube", "undoable": true}}
+```
+
+or `{"status": "error", "error": {"code": "NOT_FOUND", "message": "..."}}`.
+
+`GET /agent/state` is `editor_state`. Auth failures are HTTP 401.
+
+Agents should call `scripts/agent/defold_agent.py command ...` rather than curling these endpoints.

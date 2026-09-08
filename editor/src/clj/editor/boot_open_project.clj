@@ -15,6 +15,7 @@
 (ns editor.boot-open-project
   (:require [clojure.java.io :as io]
             [dynamo.graph :as g]
+            [editor.agent :as agent]
             [editor.app-view :as app-view]
             [editor.asset-browser :as asset-browser]
             [editor.breakpoints-view :as breakpoints-view]
@@ -219,7 +220,14 @@
                                   (scene/routes project app-view)
                                   (command-requests/router root localization (app-view/make-render-task-progress :resource-sync))
                                   (doc/routes)
-                                  (http-server.prefs/routes prefs)]))
+                                  (http-server.prefs/routes prefs)
+                                  (agent/routes {:project project
+                                                 :workspace workspace
+                                                 :app-view app-view
+                                                 :prefs prefs
+                                                 :localization localization
+                                                 :console-view console-view
+                                                 :token token})]))
           server-port (:port cli-options)
           web-server (try
                        (http-server/start! server-handler :port server-port)

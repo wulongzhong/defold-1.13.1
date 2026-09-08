@@ -1470,6 +1470,29 @@
     (debug-view/detach! debug-view)
     (build-handler project workspace prefs web-server build-errors-view main-stage tool-tab-pane)))
 
+(defn- check-handler [project workspace prefs build-errors-view main-stage tool-tab-pane]
+  (let [main-scene (.getScene ^Stage main-stage)
+        render-build-error! (make-render-build-error main-scene tool-tab-pane build-errors-view)
+        [render-progress! task-cancelled?] (begin-task-progress! :build)]
+    (build-errors-view/clear-build-errors build-errors-view)
+    (future/then
+      (async-build! project
+                    :debug true
+                    :build-engine false
+                    :run-build-hooks false
+                    :prefs prefs
+                    :render-progress! render-progress!
+                    :task-cancelled? task-cancelled?
+                    :old-artifact-map (workspace/artifact-map workspace))
+      (fn [build-results]
+        (handle-build-results! workspace render-build-error! build-results)
+        build-results))))
+
+(handler/defhandler :project.check :global
+  (enabled? [] (not (build-in-progress?)))
+  (run [project workspace prefs build-errors-view main-stage tool-tab-pane]
+    (check-handler project workspace prefs build-errors-view main-stage tool-tab-pane)))
+
 (handler/defhandler :run.set-instance-count :global
   (options [prefs user-data]
     (when-not user-data

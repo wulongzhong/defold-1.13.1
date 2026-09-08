@@ -297,6 +297,7 @@ public class ResourceCacheKeyTest {
                 "debug-output-wgsl",
                 "debug-output-msl",
                 "defoldsdk",
+                "diagnostics-json",
                 "email",
                 "exclude-archive",
                 "exclude-build-folder",

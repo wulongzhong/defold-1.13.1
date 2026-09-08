@@ -93,3 +93,36 @@
  * $ ./dmengine --config=project.mode=TEST --config=project.server=http://testserver.com
  * ```
  */
+
+/*# quit after N frames
+ * Exit after the given number of presented frames. Intended for tools and agents.
+ * Combine with `--screenshot=` to capture the last frame (Godot `--write-movie` + `--quit`).
+ *
+ * @macro
+ * @name --quit-after-frames=
+ * @examples
+ * ```bash
+ * $ ./dmengine --quit-after-frames=30 --screenshot=shot.png
+ * ```
+ */
+
+/*# write a PNG screenshot
+ * Capture the framebuffer to a PNG and quit. If `--quit-after-frames` is omitted, the engine
+ * captures the first frame and exits.
+ *
+ * @macro
+ * @name --screenshot=
+ * @examples
+ * ```bash
+ * $ ./dmengine --screenshot=shot.png
+ * $ ./dmengine --quit-after-frames=60 --screenshot=.internal/agent/frame.png
+ * ```
+ */
+
+/*# draw physics collision overlays
+ * Enable physics debug drawing (same as `physics.debug=1`). Pair with `--screenshot=` so an
+ * agent can see colliders.
+ *
+ * @macro
+ * @name --debug-collisions
+ */

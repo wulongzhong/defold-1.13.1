@@ -76,7 +76,7 @@ namespace dmScript
         }
         else
         {
-            dmLogError("Error running script: %s", lua_tostring(L,-1));
+            dmLogError("%s", lua_tostring(L,-1));
             lua_pop(L, 1);
             assert(top == lua_gettop(L));
             return false;

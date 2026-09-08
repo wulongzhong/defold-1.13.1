@@ -80,6 +80,12 @@
     :resource-sync true
     :response-fn build-response}
 
+   :check
+   {:ui-handler :project.check
+    :help "Compile the project without launching the game. Returns structured issues JSON."
+    :resource-sync true
+    :response-fn build-response}
+
    :build-html5
    {:ui-handler :project.build-html5
     :help "Build the project for HTML5 and open it in a web browser."

@@ -21,6 +21,7 @@ import com.dynamo.bob.logging.LogHelper;
 import com.dynamo.bob.logging.Logger;
 import com.dynamo.bob.util.BobProjectProperties;
 import com.dynamo.bob.util.BobTempDirectory;
+import com.dynamo.bob.util.BuildDiagnostics;
 import com.dynamo.bob.util.BuildInputDataCollector;
 import com.dynamo.bob.util.Library;
 import com.dynamo.bob.util.Library.Result;
@@ -517,6 +518,7 @@ public class Bob {
                 opt("br", "build-report", ONE, ABS_OR_CWD_REL_PATH, "DEPRECATED! Use --build-report-json instead"),
                 opt("brjson", "build-report-json", ONE, ABS_OR_CWD_REL_PATH, "Filepath where to save a build report as JSON"),
                 opt("brhtml", "build-report-html", ONE, ABS_OR_CWD_REL_PATH, "Filepath where to save a build report as HTML"),
+                opt(null, "diagnostics-json", ONE, ABS_OR_CWD_REL_PATH, "Write structured build issues as JSON for tools and agents"),
 
                 opt(null, "build-server", ONE, "The build server (when using native extensions)"),
                 opt(null, "build-server-header", MANY, "Additional build server header to set"),
@@ -981,24 +983,37 @@ public class Bob {
 
                 boolean ret = true;
                 StringBuilder errors = new StringBuilder();
+                List<BuildDiagnostics.Issue> diagnostics = new ArrayList<>();
 
                 List<TaskResult> result = new ArrayList<>();
                 try {
                     result = project.build(split.subtask(commands.length), commands);
                 } catch (MultipleCompileException e) {
                     errors = parseMultipleException(e, verbose);
+                    BuildDiagnostics.addFromMultiple(diagnostics, e);
                     ret = false;
                 } catch (CompileExceptionError e) {
                     ret = false;
                     if (isCause(MultipleCompileException.class, e)) {
-                        errors = parseMultipleException((MultipleCompileException) e.getCause(), verbose);
+                        MultipleCompileException multiple = (MultipleCompileException) e.getCause();
+                        errors = parseMultipleException(multiple, verbose);
+                        BuildDiagnostics.addFromMultiple(diagnostics, multiple);
                     } else {
-                        throw e;
+                        BuildDiagnostics.addFromCompileException(diagnostics, e);
+                        errors.append(Bob.logExceptionToString(
+                                MultipleCompileException.Info.SEVERITY_ERROR,
+                                e.getResource(),
+                                e.getLineNumber() > 0 ? e.getLineNumber() : 0,
+                                e.getMessage()));
+                        if (verbose && e.getCause() != null) {
+                            errors.append(e.getCause().toString()).append("\n");
+                        }
                     }
                 }
                 for (TaskResult taskResult : result) {
                     if (!taskResult.isOk()) {
                         ret = false;
+                        BuildDiagnostics.addFromTaskResult(diagnostics, taskResult);
                         String message = taskResult.getMessage();
                         if (message == null || message.isEmpty()) {
                             if (taskResult.getException() != null) {
@@ -1023,6 +1038,17 @@ public class Bob {
                                 }
                             }
                         }
+                    }
+                }
+                if (!diagnostics.isEmpty()) {
+                    BuildDiagnostics.printAgentLines(diagnostics);
+                }
+                if (cmd.hasOption("diagnostics-json")) {
+                    File diagnosticsFile = new File(cmd.getOptionValue("diagnostics-json"));
+                    try {
+                        BuildDiagnostics.writeJson(diagnosticsFile, ret, diagnostics);
+                    } catch (IOException e) {
+                        System.out.println("Failed to write --diagnostics-json: " + e.getMessage());
                     }
                 }
                 if (!ret) {

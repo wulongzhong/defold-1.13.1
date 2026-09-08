@@ -14,6 +14,8 @@
 
 #include "script.h"
 
+#include <string.h>
+
 #include <dlib/dstrings.h>
 #include <dlib/log.h>
 #include <dlib/math.h>
@@ -1521,6 +1523,142 @@ namespace dmScript
         return 1;
     }
 
+    static bool CopyLuaSlice(char* dst, uint32_t dst_size, const char* begin, const char* end)
+    {
+        if (!dst || dst_size == 0 || !begin || !end || end <= begin)
+        {
+            return false;
+        }
+        uint32_t n = (uint32_t)(end - begin);
+        if (n >= dst_size)
+        {
+            n = dst_size - 1;
+        }
+        memcpy(dst, begin, n);
+        dst[n] = 0;
+        return n > 0;
+    }
+
+    static bool ParseLuaFileLine(const char* text, char* file_out, uint32_t file_size, int* line_out, const char** message_out)
+    {
+        if (!text || !text[0] || !file_out || !line_out)
+        {
+            return false;
+        }
+
+        const char* start = text;
+        while (*start == ' ' || *start == '\t')
+        {
+            ++start;
+        }
+
+        const char* after_file = 0;
+        if (strncmp(start, "[string \"", 9) == 0)
+        {
+            const char* quote = strchr(start + 9, '"');
+            if (!quote || quote[1] != ']')
+            {
+                return false;
+            }
+            if (!CopyLuaSlice(file_out, file_size, start + 9, quote))
+            {
+                return false;
+            }
+            after_file = quote + 2;
+        }
+        else
+        {
+            const char* cursor = start;
+            const char* best_colon = 0;
+            while ((cursor = strchr(cursor, ':')) != 0)
+            {
+                if (cursor[1] >= '0' && cursor[1] <= '9')
+                {
+                    const char* digits = cursor + 1;
+                    while (*digits >= '0' && *digits <= '9')
+                    {
+                        ++digits;
+                    }
+                    if (*digits == ':' || *digits == ' ' || *digits == '\0' || *digits == '\n')
+                    {
+                        best_colon = cursor;
+                    }
+                }
+                ++cursor;
+            }
+            if (!best_colon || !CopyLuaSlice(file_out, file_size, start, best_colon))
+            {
+                return false;
+            }
+            after_file = best_colon;
+        }
+
+        if (*after_file == ':')
+        {
+            ++after_file;
+        }
+        if (*after_file < '0' || *after_file > '9')
+        {
+            return false;
+        }
+
+        int line = 0;
+        while (*after_file >= '0' && *after_file <= '9')
+        {
+            line = line * 10 + (*after_file - '0');
+            ++after_file;
+        }
+        if (line <= 0)
+        {
+            return false;
+        }
+        if (*after_file == ':')
+        {
+            ++after_file;
+        }
+        while (*after_file == ' ')
+        {
+            ++after_file;
+        }
+
+        *line_out = line;
+        if (message_out)
+        {
+            *message_out = after_file;
+        }
+        return true;
+    }
+
+    static void LogLuaRuntimeError(const char* error_msg, const char* traceback_msg)
+    {
+        const char* safe_error = error_msg ? error_msg : "(error value could not be converted to string)";
+        const char* safe_traceback = traceback_msg ? traceback_msg : "(traceback unavailable)";
+
+        char file[512];
+        int line = 0;
+        const char* message = safe_error;
+        bool have_location = ParseLuaFileLine(safe_error, file, sizeof(file), &line, &message);
+        if (!have_location && traceback_msg)
+        {
+            const char* frame = strstr(traceback_msg, "\n");
+            const char* scan = frame ? frame + 1 : traceback_msg;
+            have_location = ParseLuaFileLine(scan, file, sizeof(file), &line, 0);
+        }
+
+        if (have_location)
+        {
+            if (!message || !message[0])
+            {
+                message = safe_error;
+            }
+            dmLogError("%s:%d: %s\n          at: %s:%d\n%s", file, line, message, file, line, safe_traceback);
+        }
+        else
+        {
+            dmLogError("%s\n%s", safe_error, safe_traceback);
+        }
+    }
+
     static int PCallInternal(lua_State* L, int nargs, int nresult, int in_error_handler) {
         lua_pushcfunction(L, BacktraceErrorHandler);
         int err_index = lua_gettop(L) - nargs - 1;
@@ -1538,8 +1676,8 @@ namespace dmScript
             if (in_error_handler) {
                 const char* error_msg = lua_tostring(L, -2);
                 const char* traceback_msg = lua_tostring(L, -1);
-                dmLogError("In error handler: %s%s", 
-                          error_msg ? error_msg : "(error value could not be converted to string)", 
+                dmLogError("In error handler: %s%s",
+                          error_msg ? error_msg : "(error value could not be converted to string)",
                           traceback_msg ? traceback_msg : "(traceback unavailable)");
                 lua_pop(L, 3);
                 return result;
@@ -1547,9 +1685,7 @@ namespace dmScript
             // print before calling the error handler
             const char* error_msg = lua_tostring(L, -2);
             const char* traceback_msg = lua_tostring(L, -1);
-            dmLogError("%s\n%s", 
-                      error_msg ? error_msg : "(error value could not be converted to string)", 
-                      traceback_msg ? traceback_msg : "(traceback unavailable)");
+            LogLuaRuntimeError(error_msg, traceback_msg);
             lua_getfield(L, LUA_GLOBALSINDEX, "debug");
             if (lua_istable(L, -1)) {
                 lua_pushliteral(L, SCRIPT_ERROR_HANDLER_VAR);
