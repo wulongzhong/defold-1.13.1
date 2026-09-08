@@ -440,6 +440,7 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual(False, schema.get("additionalProperties"), name)
             listed = _tool_schema(name, description)
             self.assertEqual(name, listed["name"])
+        self.assertLess(len(TOOLS), 100)
 
     def test_batch_execute_is_not_atomic(self):
         import tempfile
@@ -490,6 +491,10 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", result["status"])
             self.assertTrue(result["data"]["ready"]["game_project"])
             self.assertIn("bob", result["data"]["ready"])
+            self.assertEqual("stdio", result["data"]["mcp"]["transport"])
+            self.assertIsNone(result["data"]["mcp"]["url"])
+            self.assertGreater(result["data"]["mcp"]["tools"], 20)
+            self.assertLess(result["data"]["mcp"]["tools"], 100)
 
     def test_domain_atlas_and_input(self):
         import tempfile
@@ -841,6 +846,8 @@ class ToolQualityTest(unittest.TestCase):
                 project, "texture_profiles_manage", {"op": "create", "path": "/main/os.texture_profiles"}, 2
             )
             self.assertEqual("ok", textures["status"])
+            compute = dispatch_command(project, "compute_manage", {"op": "create", "path": "/main/blur.compute"}, 2)
+            self.assertEqual("ok", compute["status"])
 
     def test_logs_read_source_engine(self):
         import tempfile

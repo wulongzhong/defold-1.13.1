@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from agent_mcp import mcp_client_config, serve_stdio
+from agent_mcp import TOOLS, mcp_client_config, serve_stdio
 from agent_ops import (
     dispatch_command,
     error_envelope,
@@ -557,6 +557,7 @@ def doctor_payload(project: Path, params: Optional[Dict[str, Any]] = None) -> Di
             ],
         },
         "source": "doctor",
+        "mcp": {"transport": "stdio", "tools": len(TOOLS), "url": None},
     }
     return data
 

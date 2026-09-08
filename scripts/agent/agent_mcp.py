@@ -85,6 +85,7 @@ TOOLS = [
     ("cubemap_manage", "Create/get/list cubemap face images."),
     ("mesh_manage", "Create/get/list .mesh files."),
     ("texture_profiles_manage", "Create/get/list texture profile files."),
+    ("compute_manage", "Create/get/list compute shader program files."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
@@ -516,6 +517,20 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "texture_profiles_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "compute_manage": {
         "type": "object",
         "additionalProperties": False,
         "required": ["op"],

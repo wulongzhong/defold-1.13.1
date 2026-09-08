@@ -1111,6 +1111,7 @@ DISK_COMMANDS = [
     "collisionobject_manage",
     "component_add",
     "component_manage",
+    "compute_manage",
     "cubemap_manage",
     "editor_manage",
     "editor_state",

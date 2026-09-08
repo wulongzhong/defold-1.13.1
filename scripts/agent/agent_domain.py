@@ -38,6 +38,7 @@ DOMAIN_EXT = {
     "cubemap_manage": "cubemap",
     "mesh_manage": "mesh",
     "texture_profiles_manage": "texture_profiles",
+    "compute_manage": "compute",
 }
 
 FALLBACK_TEMPLATES = {
@@ -141,6 +142,7 @@ FALLBACK_TEMPLATES = {
         '  name: "Default"\n'
         "}\n"
     ),
+    "compute": 'compute_program: ""\n',
 }
 
 CAMERA_BLOCK = """
@@ -337,6 +339,8 @@ def summarize(command: str, path: str, text: str) -> Dict[str, Any]:
     elif command == "texture_profiles_manage":
         data["profiles"] = quoted(text, "name")
         data["paths"] = quoted(text, "path")
+    elif command == "compute_manage":
+        data["compute_program"] = scalar(text, "compute_program")
     return data
 
 

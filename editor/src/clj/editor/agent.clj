@@ -54,6 +54,7 @@
    "collisionobject_manage"
    "component_add"
    "component_manage"
+   "compute_manage"
    "cubemap_manage"
    "display_profiles_manage"
    "editor_manage"
@@ -521,14 +522,30 @@
                  (resolve-go-instance collection-node parent-id)
                  collection-node)
         prototype-path (optional-string params :path)
+        collection-file (and prototype-path (string/ends-with? prototype-path ".collection"))
         position (vec3-param params :position)
         instance (capture-created-node
                    (fn [select-fn]
-                     (if prototype-path
+                     (cond
+                       collection-file
+                       (let [resource (workspace/find-resource workspace prototype-path)]
+                         (if-not resource
+                           (fail! "NOT_FOUND" (str "Collection file not found: " prototype-path) nil)
+                           (collection/add-referenced-collection!
+                             collection-node
+                             resource
+                             (or desired-id (resource-stem prototype-path))
+                             {}
+                             []
+                             select-fn)))
+
+                       prototype-path
                        (let [resource (workspace/find-resource workspace prototype-path)]
                          (if-not resource
                            (fail! "NOT_FOUND" (str "Game object file not found: " prototype-path) nil)
                            (collection/add-referenced-game-object! collection-node parent resource select-fn)))
+
+                       :else
                        (collection/add-embedded-game-object! workspace project collection-node parent select-fn))))]
     (when (or desired-id position)
       (g/transact
@@ -540,8 +557,11 @@
             (g/set-property instance :position position)))))
     {:id (g/node-value instance :id)
      :node_id instance
-     :type "gameobject"
-     :kind (if prototype-path "referenced" "embedded")
+     :type (if collection-file "collection_instance" "gameobject")
+     :kind (cond
+             collection-file "collection_instance"
+             prototype-path "referenced"
+             :else "embedded")
      :prototype prototype-path
      :undoable true}))
 
@@ -947,6 +967,9 @@
 (defn- cmd-texture-profiles-manage [ctx params]
   (cmd-file-domain-manage ctx params "texture_profiles"))
 
+(defn- cmd-compute-manage [ctx params]
+  (cmd-file-domain-manage ctx params "compute"))
+
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
         component (or (optional-string params :component)
@@ -1003,6 +1026,7 @@
    "collisionobject_manage" cmd-collisionobject-manage
    "component_add" cmd-component-add
    "component_manage" cmd-component-manage
+   "compute_manage" cmd-compute-manage
    "cubemap_manage" cmd-cubemap-manage
    "display_profiles_manage" cmd-display-profiles-manage
    "editor_manage" cmd-editor-manage
