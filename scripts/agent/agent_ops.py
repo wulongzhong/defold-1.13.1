@@ -177,20 +177,54 @@ def patch_text(text: str, old_text: str, new_text: str) -> str:
     return text.replace(old_text, new_text, 1)
 
 
-def parse_gameobject_properties(text: str, path: str, go_id: str) -> Optional[Dict[str, Any]]:
-    marker = f'id: "{go_id}"'
-    start = text.find(marker)
-    if start < 0:
+def list_component_ids(go_text: str) -> List[Dict[str, str]]:
+    items: List[Dict[str, str]] = []
+    for kind in ("embedded_components", "components"):
+        for match in re.finditer(rf"{kind}\s*\{{", go_text):
+            open_at = go_text.find("{", match.start())
+            close_at = match_brace(go_text, open_at) if open_at >= 0 else None
+            if close_at is None:
+                continue
+            block = go_text[match.start() : close_at + 1]
+            ident = first_quoted_id(block)
+            if not ident:
+                continue
+            item: Dict[str, str] = {"id": ident, "kind": "referenced" if kind == "components" else "embedded"}
+            proto = re.search(r'component:\s*"([^"]+)"', block)
+            type_name = re.search(r'type:\s*"([^"]+)"', block)
+            if proto:
+                item["path"] = proto.group(1)
+            if type_name:
+                item["type"] = type_name.group(1)
+            items.append(item)
+    return items
+
+
+def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    try:
+        _start, _end, block = find_instance_span(text, go_id)
+    except FileNotFoundError:
         return None
-    match_text = text[start : start + 800]
-    pos = re.search(r"position\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)", match_text)
+    pos = re.search(r"position\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)", block)
     properties: Dict[str, Any] = {}
     if pos:
         properties["position"] = [float(pos.group(1)), float(pos.group(2)), float(pos.group(3))]
+    proto = instance_prototype(block)
+    go_text = ""
+    if proto and project is not None:
+        try:
+            go_text = _read_text(project, proto)
+        except FileNotFoundError:
+            go_text = ""
+    else:
+        go_text = decode_data_field(block) or ""
     return {
         "id": go_id,
         "path": path,
         "source": "disk",
+        "kind": "referenced" if proto else "embedded",
+        "prototype": proto,
+        "components": list_component_ids(go_text),
         "properties": properties,
     }
 
@@ -455,8 +489,9 @@ class BuildingLock:
 
 def compute_readiness(project: Path) -> str:
     control = project / ".internal" / "agent" / "control"
-    if (control / "dump.request").is_file() and not (control / "dump.ready").is_file():
-        return "observing"
+    for kind in ("dump", "screenshot"):
+        if (control / f"{kind}.request").is_file() and not (control / f"{kind}.ready").is_file():
+            return "observing"
     if building_lock_path(project).is_file():
         return "building"
     try:
@@ -648,7 +683,12 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             go_id = params.get("id")
             if not path or not go_id:
                 return error_envelope("MISSING_PARAM", "gameobject_get_properties needs collection and id")
-            parsed = parse_gameobject_properties(_read_text(project, path), sanitize_proj_path(path), str(go_id))
+            parsed = parse_gameobject_properties(
+                _read_text(project, path),
+                sanitize_proj_path(path),
+                str(go_id),
+                project,
+            )
             if parsed is None:
                 return error_envelope("NOT_FOUND", f"Game object '{go_id}' was not found")
             return ok_envelope(parsed)
@@ -668,8 +708,25 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             return ok_envelope({"path": sanitize_proj_path(path), "patched": True, "source": "disk"})
         if command == "script_manage" and params.get("op") == "read":
             path = params.get("path")
+            if not path and params.get("collection") and params.get("id"):
+                parsed = parse_gameobject_properties(
+                    _read_text(project, params.get("collection")),
+                    sanitize_proj_path(str(params.get("collection"))),
+                    str(params.get("id")),
+                    project,
+                )
+                if parsed is None:
+                    return error_envelope("NOT_FOUND", f"Game object '{params.get('id')}' was not found")
+                component = params.get("component")
+                matches = parsed.get("components") or []
+                if component:
+                    matches = [item for item in matches if item.get("id") == component]
+                script_paths = [item.get("path") for item in matches if str(item.get("path") or "").endswith(".script")]
+                if not script_paths:
+                    return error_envelope("NOT_FOUND", "No script component path was found")
+                path = script_paths[0]
             if not path:
-                return error_envelope("MISSING_PARAM", "Missing path")
+                return error_envelope("MISSING_PARAM", "script_manage read needs path or collection+id")
             return ok_envelope({"path": sanitize_proj_path(path), "text": _read_text(project, path), "source": "disk"})
         if command == "filesystem_manage":
             op = params.get("op")
@@ -968,7 +1025,9 @@ DISK_COMMANDS = [
     "editor_manage",
     "editor_state",
     "filesystem_manage",
+    "display_profiles_manage",
     "font_manage",
+    "gamepads_manage",
     "gameobject_create",
     "gameobject_get_properties",
     "gameobject_manage",

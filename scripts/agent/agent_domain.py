@@ -28,6 +28,8 @@ DOMAIN_EXT = {
     "material_manage": "material",
     "input_binding_manage": "input_binding",
     "render_manage": "render",
+    "gamepads_manage": "gamepads",
+    "display_profiles_manage": "display_profiles",
 }
 
 FALLBACK_TEMPLATES = {
@@ -97,6 +99,16 @@ FALLBACK_TEMPLATES = {
         "size: 15\n"
     ),
     "sound": 'sound: "{sound}"\nlooping: 0\ngroup: "master"\ngain: 1.0\n',
+    "gamepads": "driver {\n    device: \"Controller\"\n    platform: \"windows\"\n    dead_zone: 0.2\n}\n",
+    "display_profiles": (
+        "profiles {\n"
+        '  name: "Landscape"\n'
+        "  qualifiers {\n"
+        "    width: 1280\n"
+        "    height: 720\n"
+        "  }\n"
+        "}\n"
+    ),
 }
 
 CAMERA_BLOCK = """
@@ -261,6 +273,10 @@ def summarize(command: str, path: str, text: str) -> Dict[str, Any]:
     elif command == "sound_manage":
         data["sound"] = scalar(text, "sound")
         data["group"] = scalar(text, "group")
+    elif command == "gamepads_manage":
+        data["devices"] = quoted(text, "device")
+    elif command == "display_profiles_manage":
+        data["profiles"] = quoted(text, "name")
     return data
 
 

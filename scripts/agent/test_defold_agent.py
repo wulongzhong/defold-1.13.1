@@ -555,6 +555,8 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", result["status"])
             self.assertEqual("disk", result["data"]["source"])
             self.assertEqual([1.0, 2.0, 3.0], result["data"]["properties"]["position"])
+            self.assertEqual("embedded", result["data"]["kind"])
+            self.assertEqual([], result["data"]["components"])
 
     def test_runtime_state_lists_targets(self):
         import tempfile
@@ -654,6 +656,21 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", scripted["status"])
             collection = (project / "main" / "main.collection").read_text(encoding="utf-8")
             self.assertIn("cube.script", collection)
+            read = dispatch_command(
+                project,
+                "script_manage",
+                {"op": "read", "collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertEqual("ok", read["status"])
+            self.assertIn("function init(self)", read["data"]["text"])
+            props = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertTrue(any(item.get("path") == "/main/cube.script" for item in props["data"]["components"]))
             renamed = dispatch_command(
                 project,
                 "gameobject_manage",
@@ -776,6 +793,14 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", sound["status"])
             beep = dispatch_command(project, "sound_manage", {"op": "get", "path": "/main/beep.sound"}, 2)
             self.assertEqual("/main/beep.ogg", beep["data"]["sound"])
+            pads = dispatch_command(project, "gamepads_manage", {"op": "create", "path": "/input/default.gamepads"}, 2)
+            self.assertEqual("ok", pads["status"])
+            listed = dispatch_command(project, "gamepads_manage", {"op": "get", "path": "/input/default.gamepads"}, 2)
+            self.assertTrue(listed["data"]["devices"])
+            profiles = dispatch_command(
+                project, "display_profiles_manage", {"op": "create", "path": "/builtins/display.display_profiles"}, 2
+            )
+            self.assertEqual("ok", profiles["status"])
 
     def test_logs_read_source_engine(self):
         import tempfile

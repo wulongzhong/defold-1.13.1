@@ -51,11 +51,13 @@
    "collection_save"
    "component_add"
    "component_manage"
+   "display_profiles_manage"
    "editor_manage"
    "editor_preview"
    "editor_state"
    "filesystem_manage"
    "font_manage"
+   "gamepads_manage"
    "gameobject_create"
    "gameobject_get_properties"
    "gameobject_manage"
@@ -220,6 +222,12 @@
     (g/node-instance? game-object/GameObjectNode node-id) "gameobject_resource"
     :else "node"))
 
+(defn- instance-kind [node-id]
+  (cond
+    (g/node-instance? collection/ReferencedGOInstanceNode node-id) "referenced"
+    (g/node-instance? collection/EmbeddedGOInstanceNode node-id) "embedded"
+    :else nil))
+
 (defn- source-proj-path [node-id]
   (let [res (g/maybe-node-value node-id :source-resource)]
     (when (resource/resource? res)
@@ -227,10 +235,14 @@
 
 (defn- outline-node [item localization]
   (let [node-id (:node-id item)
-        children (:children item)]
+        children (:children item)
+        kind (instance-kind node-id)]
     (cond-> {:id (outline-label item localization)
              :type (node-kind node-id)
              :node_id node-id}
+      kind
+      (assoc :kind kind)
+
       (source-proj-path node-id)
       (assoc :resource (source-proj-path node-id))
 
@@ -450,15 +462,25 @@
   (let [collection-node (resolve-collection-node ctx params)
         go-id (require-string params :id)
         instance (resolve-go-instance collection-node go-id)
+        go-node (resolve-go-node instance)
         component-id (optional-string params :component)
         target (if component-id
-                 (resolve-component (resolve-go-node instance) component-id)
-                 instance)]
+                 (resolve-component go-node component-id)
+                 instance)
+        ids (g/node-value go-node :component-ids)]
     {:id (g/node-value target :id)
      :type (node-kind target)
+     :kind (instance-kind instance)
      :node_id target
      :resource (source-proj-path target)
      :source "editor"
+     :components (into []
+                       (map (fn [[id node]]
+                              {:id id
+                               :node_id node
+                               :type (node-kind node)
+                               :resource (source-proj-path node)}))
+                       ids)
      :properties (property-snapshot target)}))
 
 (defn- cmd-session-activate [_ctx _params]
@@ -511,6 +533,8 @@
     {:id (g/node-value instance :id)
      :node_id instance
      :type "gameobject"
+     :kind (if prototype-path "referenced" "embedded")
+     :prototype prototype-path
      :undoable true}))
 
 (defn- cmd-component-add [ctx params]
@@ -885,6 +909,12 @@
 (defn- cmd-sound-manage [ctx params]
   (cmd-file-domain-manage ctx params "sound"))
 
+(defn- cmd-gamepads-manage [ctx params]
+  (cmd-file-domain-manage ctx params "gamepads"))
+
+(defn- cmd-display-profiles-manage [ctx params]
+  (cmd-file-domain-manage ctx params "display_profiles"))
+
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
         component (or (optional-string params :component)
@@ -938,11 +968,13 @@
    "collection_save" cmd-collection-save
    "component_add" cmd-component-add
    "component_manage" cmd-component-manage
+   "display_profiles_manage" cmd-display-profiles-manage
    "editor_manage" cmd-editor-manage
    "editor_preview" cmd-editor-preview
    "editor_state" cmd-editor-state
    "filesystem_manage" cmd-filesystem-manage
    "font_manage" cmd-font-manage
+   "gamepads_manage" cmd-gamepads-manage
    "gameobject_create" cmd-gameobject-create
    "gameobject_get_properties" cmd-gameobject-get-properties
    "gameobject_manage" cmd-gameobject-manage

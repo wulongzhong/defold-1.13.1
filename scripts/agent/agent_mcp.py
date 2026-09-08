@@ -75,6 +75,8 @@ TOOLS = [
     ("tilesource_manage", "Create/get/list tilesources, images, and animations."),
     ("font_manage", "Create/get/list .font files and set the TTF."),
     ("sound_manage", "Create/get/list .sound files and set the sample."),
+    ("gamepads_manage", "Create/get/list .gamepads driver maps."),
+    ("display_profiles_manage", "Create/get/list display profile files."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
@@ -367,6 +369,34 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property", "set_sound"]},
             "path": {"type": "string"},
             "sound": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "gamepads_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "display_profiles_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
             "name": {"type": "string"},
             "property": {"type": "string"},
             "value": {},
