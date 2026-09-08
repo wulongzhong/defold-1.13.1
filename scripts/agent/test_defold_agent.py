@@ -421,6 +421,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             prompts = handle_rpc({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"}, project, 2)
             self.assertTrue(any(item["name"] == "defold-observe" for item in prompts["result"]["prompts"]))
             self.assertTrue(any(item["name"] == "defold-check" for item in prompts["result"]["prompts"]))
+            self.assertTrue(any(item["name"] == "defold-author" for item in prompts["result"]["prompts"]))
             prompt = handle_rpc(
                 {"jsonrpc": "2.0", "id": 6, "method": "prompts/get", "params": {"name": "defold-observe"}},
                 project,

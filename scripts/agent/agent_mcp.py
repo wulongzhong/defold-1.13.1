@@ -904,6 +904,14 @@ PROMPTS = [
         "arguments": [{"name": "frames", "required": False}],
     },
     {
+        "name": "defold-author",
+        "description": "Author on disk without the editor: collection, GO parent/transform, tile, GUI, API docs.",
+        "arguments": [
+            {"name": "collection", "description": "Collection path.", "required": False},
+            {"name": "id", "description": "Game object id.", "required": False},
+        ],
+    },
+    {
         "name": "defold-check",
         "description": "Compile only, then read logs/issues. Never launch.",
         "arguments": [],
@@ -1096,6 +1104,7 @@ def read_mcp_resource(project: Path, uri: str, timeout: float) -> Dict[str, Any]
 def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     go_id = arguments.get("id") or "cube"
     frames = arguments.get("frames") or "30"
+    collection = arguments.get("collection") or "/main/main.collection"
     texts = {
         "defold-doctor": "Call project_doctor. Report bob, dmengine, editor, and game.project readiness. Do not use an HTTP MCP URL.",
         "defold-observe": (
@@ -1109,6 +1118,12 @@ def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         "defold-loop": (
             f"Call project_check / project_build (check only), then runtime_observe frames={frames}. "
             "Do not screenshot unless the user asks how it looks."
+        ),
+        "defold-author": (
+            f"Edit {collection} on disk. Create or parent id={go_id} with gameobject_create "
+            "(parent/position/rotation/scale work without the editor). Use tilemap_manage set_tile and "
+            "gui_manage set_node for tiles and HUD. Look up Lua with api_manage. "
+            "batch_execute is atomic on disk. Do not use an HTTP MCP URL. Do not screenshot."
         ),
         "defold-check": (
             "Call project_check (launched=false). Then logs_read source=all. "
