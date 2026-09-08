@@ -659,7 +659,7 @@
         position (vec3-param params :position)
         rotation (rotation-param params)
         scale (scale-param params)
-        instance (capture-created-node)
+        instance (capture-created-node
                    (fn [select-fn]
                      (cond
                        collection-file
