@@ -99,6 +99,8 @@ One live process per project. `project-stop` kills the pid recorded in `.interna
 python .../defold_agent.py command editor_state
 python .../defold_agent.py command gameobject_create --params "{\"collection\":\"/main/main.collection\",\"id\":\"cube\",\"position\":[0,0,0]}"
 python .../defold_agent.py command gameobject_create --params "{\"collection\":\"/main/main.collection\",\"id\":\"hat\",\"parent\":\"cube\"}"
+python .../defold_agent.py command gameobject_manage --params "{\"op\":\"set_property\",\"collection\":\"/main/main.collection\",\"id\":\"cube\",\"property\":\"rotation\",\"value\":90}"
+python .../defold_agent.py command filesystem_manage --params "{\"op\":\"list\",\"path\":\"/\"}"
 python .../defold_agent.py create-script --path /main/cube.script
 python .../defold_agent.py patch-script --path /main/cube.script --old "function init(self)" --new "function init(self) -- hi"
 python .../defold_agent.py command collection_manage --params "{\"op\":\"create\",\"path\":\"/main/level.collection\"}"

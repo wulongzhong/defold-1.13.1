@@ -794,7 +794,49 @@
                   :offset offset
                   :limit limit
                   :truncated (< (+ offset (count page)) (count matches))})
-      (unknown-op op ["read_text" "write_text" "search"]))))
+      "list" (let [rel (or (optional-string params :path) "/")
+                   ^File file (if (or (= rel "/") (string/blank? rel))
+                                root
+                                (project-file workspace (sanitize-proj-path rel)))
+                   offset (max (long (or (get params :offset) 0)) 0)
+                   limit (max (long (or (get params :limit) 100)) 1)]
+               (when-not (.isDirectory file)
+                 (fail! "NOT_FOUND" (str "Directory not found: " rel) nil))
+               (let [listed (or (.listFiles file) (into-array File []))
+                     names (vec
+                             (sort
+                               (into []
+                                     (comp
+                                       (map (fn [^File child] (.getName child)))
+                                       (remove #(contains? #{".internal" "build" ".git" ".editor"} %)))
+                                     listed)))
+                     page (into [] (comp (drop offset) (take limit)) names)]
+                 {:path (if (or (= rel "/") (string/blank? rel)) "/" (sanitize-proj-path rel))
+                  :entries (mapv
+                             (fn [name]
+                               (let [child (io/file file name)]
+                                 {:name name
+                                  :path (resource/file->proj-path root child)
+                                  :type (if (.isDirectory child) "directory" "file")}))
+                             page)
+                  :total (count names)
+                  :offset offset
+                  :limit limit
+                  :truncated (< (+ offset (count page)) (count names))}))
+      "delete" (let [path (sanitize-proj-path (require-string params :path))
+                     file (project-file workspace path)]
+                 (when (or (= path "/game.project")
+                           (string/starts-with? path "/.internal/"))
+                   (fail! "NOT_ALLOWED" (str "Refusing to delete " path) nil))
+                 (when-not (.isFile file)
+                   (fail! "NOT_FOUND" (str "File not found: " path) nil))
+                 (fs/delete-file! file)
+                 (workspace/resource-sync! workspace)
+                 {:path path
+                  :deleted true
+                  :undoable false
+                  :source "editor"})
+      (unknown-op op ["read_text" "write_text" "list" "delete" "search"]))))
 
 (defn- cmd-project-manage [ctx params]
   (let [op (require-string params :op)

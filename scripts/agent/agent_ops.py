@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import math
 import os
 import re
 import urllib.error
@@ -210,6 +211,24 @@ def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optio
     properties: Dict[str, Any] = {}
     if pos:
         properties["position"] = [float(pos.group(1)), float(pos.group(2)), float(pos.group(3))]
+    rot = re.search(
+        r"rotation\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)\s*w:\s*([-\d.]+)",
+        block,
+    )
+    if rot:
+        properties["rotation"] = [
+            float(rot.group(1)),
+            float(rot.group(2)),
+            float(rot.group(3)),
+            float(rot.group(4)),
+        ]
+    scale3 = re.search(r"scale3\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)", block)
+    if scale3:
+        properties["scale"] = [float(scale3.group(1)), float(scale3.group(2)), float(scale3.group(3))]
+    else:
+        scale = re.search(r"(?m)^[ \t]*scale:\s*([-\d.]+)", block)
+        if scale:
+            properties["scale"] = float(scale.group(1))
     proto = instance_prototype(block)
     go_text = ""
     if proto and project is not None:
@@ -466,6 +485,13 @@ def remove_instance_block(text: str, go_id: str) -> str:
     return strip_child_refs(text[:start] + text[end:], go_id)
 
 
+def _replace_named_block(block: str, name: str, replacement: str) -> str:
+    if re.search(rf"{name}\s*\{{", block):
+        return re.sub(rf"{name}\s*\{{[^{{}}]*\}}", replacement, block, count=1)
+    close_at = block.rfind("}")
+    return block[:close_at] + "  " + replacement + "\n" + block[close_at:]
+
+
 def set_position_in_block(block: str, value: Any) -> str:
     if isinstance(value, dict):
         xyz = [value.get("x", 0), value.get("y", 0), value.get("z", 0)]
@@ -475,10 +501,62 @@ def set_position_in_block(block: str, value: Any) -> str:
         raise ValueError("position must be [x, y, z]")
     x, y, z = (xyz + [0, 0, 0])[:3]
     new_pos = f"position {{\n    x: {float(x)}\n    y: {float(y)}\n    z: {float(z)}\n  }}"
-    if re.search(r"position\s*\{", block):
-        return re.sub(r"position\s*\{[^{}]*\}", new_pos, block, count=1)
-    close_at = block.rfind("}")
-    return block[:close_at] + "  " + new_pos + "\n" + block[close_at:]
+    return _replace_named_block(block, "position", new_pos)
+
+
+def euler_z_to_quat(degrees: float) -> Tuple[float, float, float, float]:
+    half = math.radians(float(degrees)) * 0.5
+    return (0.0, 0.0, math.sin(half), math.cos(half))
+
+
+def parse_rotation(value: Any) -> Tuple[float, float, float, float]:
+    if isinstance(value, (int, float)):
+        return euler_z_to_quat(float(value))
+    if isinstance(value, (list, tuple)):
+        if len(value) == 1:
+            return euler_z_to_quat(float(value[0]))
+        if len(value) == 4:
+            return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
+        if len(value) == 3:
+            return euler_z_to_quat(float(value[2]))
+    if isinstance(value, dict):
+        if "w" in value:
+            return (
+                float(value.get("x") or 0),
+                float(value.get("y") or 0),
+                float(value.get("z") or 0),
+                float(value.get("w") or 1),
+            )
+        return euler_z_to_quat(float(value.get("z") or 0))
+    raise ValueError("rotation must be a quaternion [x, y, z, w] or z degrees")
+
+
+def set_rotation_in_block(block: str, value: Any) -> str:
+    x, y, z, w = parse_rotation(value)
+    new_rot = f"rotation {{\n    x: {x}\n    y: {y}\n    z: {z}\n    w: {w}\n  }}"
+    return _replace_named_block(block, "rotation", new_rot)
+
+
+def parse_scale(value: Any) -> List[float]:
+    if isinstance(value, (int, float)):
+        return [float(value), float(value), float(value)]
+    if isinstance(value, (list, tuple)):
+        nums = [float(item) for item in value]
+        return (nums + [1.0, 1.0, 1.0])[:3]
+    if isinstance(value, dict):
+        return [
+            float(value.get("x") if value.get("x") is not None else 1),
+            float(value.get("y") if value.get("y") is not None else 1),
+            float(value.get("z") if value.get("z") is not None else 1),
+        ]
+    raise ValueError("scale must be a number or [x, y, z]")
+
+
+def set_scale_in_block(block: str, value: Any) -> str:
+    x, y, z = parse_scale(value)
+    new_scale = f"scale3 {{\n    x: {x}\n    y: {y}\n    z: {z}\n  }}"
+    stripped = re.sub(r"(?m)^[ \t]*scale:\s*[-\d.]+\s*\n?", "", block)
+    return _replace_named_block(stripped, "scale3", new_scale)
 
 
 def component_snippet(params: Dict[str, Any]) -> Tuple[str, str]:
@@ -866,6 +944,57 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 path = params.get("path")
                 _write_text(project, path, params.get("text", ""), overwrite=True)
                 return ok_envelope({"path": sanitize_proj_path(path), "written": True, "undoable": False, "source": "disk"})
+            if op == "list":
+                rel = params.get("path") or "/"
+                directory = project if rel in {"/", "", ".", None} else project_file(project, str(rel))
+                if not directory.is_dir():
+                    return error_envelope("NOT_FOUND", f"Directory not found: {rel}")
+                offset = max(int(params.get("offset") or 0), 0)
+                limit = max(int(params.get("limit") or 100), 1)
+                hidden = SKIP_DIRS
+                names = sorted(
+                    name for name in os.listdir(directory) if name not in hidden
+                )
+                sliced = names[offset : offset + limit]
+                entries = []
+                for name in sliced:
+                    item = directory / name
+                    proj = "/" + item.relative_to(project).as_posix()
+                    entries.append(
+                        {
+                            "name": name,
+                            "path": proj,
+                            "type": "directory" if item.is_dir() else "file",
+                        }
+                    )
+                return ok_envelope(
+                    {
+                        "path": "/" if rel in {"/", "", ".", None} else sanitize_proj_path(str(rel)),
+                        "entries": entries,
+                        "total": len(names),
+                        "offset": offset,
+                        "limit": limit,
+                        "truncated": offset + len(sliced) < len(names),
+                        "source": "disk",
+                    }
+                )
+            if op == "delete":
+                path = params.get("path")
+                if not path:
+                    return error_envelope("MISSING_PARAM", "delete needs path")
+                file_path = project_file(project, path)
+                from agent_runtime import is_snapshot_path
+
+                proj = sanitize_proj_path(path)
+                if proj == "/game.project" or proj.startswith("/.internal/"):
+                    return error_envelope("NOT_ALLOWED", f"Refusing to delete {proj}")
+                if is_snapshot_path(project, file_path):
+                    return error_envelope("NOT_ALLOWED", "Do not delete snapshot files.")
+                if not file_path.is_file():
+                    return error_envelope("NOT_FOUND", f"File not found: {proj}")
+                note_file_write(file_path)
+                file_path.unlink()
+                return ok_envelope({"path": proj, "deleted": True, "undoable": False, "source": "disk"})
             if op == "search":
                 query = params.get("query")
                 if not query:
@@ -896,7 +1025,11 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                         "source": "disk",
                     }
                 )
-            return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["read_text", "write_text", "search"])
+            return error_envelope(
+                "UNKNOWN_OP",
+                f"Unknown op: {op}",
+                suggestions=["read_text", "write_text", "list", "delete", "search"],
+            )
         if command == "collection_manage":
             op = params.get("op")
             if op == "create":
@@ -957,8 +1090,34 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 start, end, block = find_instance_span(text, str(go_id))
                 if str(key) == "position":
                     block = set_position_in_block(block, params.get("value"))
+                elif str(key) == "rotation":
+                    block = set_rotation_in_block(block, params.get("value"))
+                elif str(key) == "scale":
+                    block = set_scale_in_block(block, params.get("value"))
                 elif str(key) == "id":
                     return disk_command(project, "gameobject_manage", {**params, "op": "rename", "name": params.get("value")})
+                elif str(key) == "parent":
+                    new_parent = params.get("value")
+                    if new_parent in {"", None}:
+                        text = strip_child_refs(text, str(go_id))
+                    else:
+                        if str(new_parent) == str(go_id):
+                            return error_envelope("INVALID_PARAM", "A game object cannot parent itself")
+                        text = strip_child_refs(text, str(go_id))
+                        try:
+                            text = add_child_to_parent(text, str(new_parent), str(go_id))
+                        except FileNotFoundError:
+                            return error_envelope("NOT_FOUND", f"Parent '{new_parent}' was not found")
+                    _write_text(project, path, text, overwrite=True)
+                    return ok_envelope(
+                        {
+                            "id": go_id,
+                            "property": "parent",
+                            "value": new_parent,
+                            "undoable": False,
+                            "source": "disk",
+                        }
+                    )
                 else:
                     raise ValueError(f"Unsupported disk property: {key}")
                 _write_text(project, path, text[:start] + block + text[end:], overwrite=True)

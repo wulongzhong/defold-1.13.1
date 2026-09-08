@@ -939,6 +939,99 @@ class ToolQualityTest(unittest.TestCase):
             self.assertNotIn('children: "cap"', text)
             self.assertIn('id: "cube"', text)
 
+    def test_disk_transform_and_filesystem_list_delete(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            (project / "main" / "scratch.script").write_text("function init(self)\nend\n", encoding="utf-8")
+            dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "hat"},
+                2,
+            )
+            turned = dispatch_command(
+                project,
+                "gameobject_manage",
+                {
+                    "op": "set_property",
+                    "collection": "/main/main.collection",
+                    "id": "cube",
+                    "property": "rotation",
+                    "value": 90,
+                },
+                2,
+            )
+            self.assertEqual("ok", turned["status"])
+            sized = dispatch_command(
+                project,
+                "gameobject_manage",
+                {
+                    "op": "set_property",
+                    "collection": "/main/main.collection",
+                    "id": "cube",
+                    "property": "scale",
+                    "value": 2,
+                },
+                2,
+            )
+            self.assertEqual("ok", sized["status"])
+            parented = dispatch_command(
+                project,
+                "gameobject_manage",
+                {
+                    "op": "set_property",
+                    "collection": "/main/main.collection",
+                    "id": "hat",
+                    "property": "parent",
+                    "value": "cube",
+                },
+                2,
+            )
+            self.assertEqual("ok", parented["status"])
+            props = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            rotation = props["data"]["properties"]["rotation"]
+            self.assertAlmostEqual(0.7071, rotation[2], places=3)
+            self.assertAlmostEqual(0.7071, rotation[3], places=3)
+            self.assertEqual([2.0, 2.0, 2.0], props["data"]["properties"]["scale"])
+            self.assertEqual(["hat"], props["data"]["children"])
+            listed = dispatch_command(project, "filesystem_manage", {"op": "list", "path": "/"}, 2)
+            names = {item["name"] for item in listed["data"]["entries"]}
+            self.assertIn("main", names)
+            self.assertIn("game.project", names)
+            self.assertNotIn(".internal", names)
+            deleted = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "delete", "path": "/main/scratch.script"},
+                2,
+            )
+            self.assertEqual("ok", deleted["status"])
+            self.assertFalse((project / "main" / "scratch.script").is_file())
+            blocked = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "delete", "path": "/game.project"},
+                2,
+            )
+            self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+
     def test_referenced_go_and_project_stop(self):
         import tempfile
         from pathlib import Path
