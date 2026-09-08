@@ -80,13 +80,13 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 
 | 层 | 名字 | 现在 | 本文要求 |
 | --- | --- | --- | --- |
-| L0 | 工程感知 | 部分：`editor_state`、磁盘读、`api_manage` | 稳定 readiness、工程根、bob/engine/editor 是否可用 |
+| L0 | 工程感知 | `editor_state`（含 `engine` / `game_status`）、磁盘读、`api_manage`、`project_doctor` | readiness 门闩：`building` / `observing` 拒写 |
 | L1 | 作者态编辑 | 已有 v0 工具面 | 补 schema、原子 batch、缺的资源域后做 |
 | L2 | 编译诊断 | `check` / bob diagnostics / `ERROR:BUILD` | 继续统一 issues 信封 |
 | L3 | 运行与生命周期 | `run --frames` 会退出；编辑器 Play 对 Agent 不透明 | 批跑 + 保活 + 停止 + 发现 target |
 | L4 | **运行时观察** | **几乎没有**（退出时一张图 + stdout，没有树） | **本阶段主需求：快照文件 + 查询。截屏只是其中一项** |
 | L5 | 运行时干预 | 明确未做 | R2 再评估；不阻塞 L4 |
-| L6 | 领域资源 | 未做 atlas/tilemap/… | 观察闭环稳定后再做 |
+| L6 | 领域资源 | atlas / tilemap / tilesource / font / sound / gui / input / particlefx / material / camera / render | 编辑器关着走磁盘；`undoable: false` |
 
 `AI_MCP.md` 把「运行时灌输入 / `game_eval` / debugger 截帧」整包标成不做。那是 L5。L4 **不是**同一件事。引擎里已经有只读观察通道，见 §7。
 

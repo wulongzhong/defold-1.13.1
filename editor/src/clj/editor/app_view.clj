@@ -883,6 +883,10 @@
 (defn- build-in-progress? []
   @build-in-progress-atom)
 
+(defn building? []
+  (or @build-in-progress-atom
+      (bob/build-in-progress?)))
+
 (declare async-save!)
 
 (defn- async-reload-on-app-focus? [prefs]

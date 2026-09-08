@@ -983,12 +983,12 @@ def cmd_project_stop(args: argparse.Namespace) -> int:
 
 def cmd_mcp(args: argparse.Namespace) -> int:
     project = find_project(Path(args.project) if args.project else None)
-    return serve_stdio(project, args.timeout)
+    return serve_stdio(project, args.timeout, exclude_domains=args.exclude_domains)
 
 
 def cmd_mcp_config(args: argparse.Namespace) -> int:
     project = Path(args.project).resolve() if args.project else None
-    text = mcp_client_config(Path(__file__), project, args.format)
+    text = mcp_client_config(Path(__file__), project, args.format, exclude_domains=args.exclude_domains)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
     sys.stdout.write(text)
@@ -1150,10 +1150,20 @@ def build_parser() -> argparse.ArgumentParser:
     project_stop_cmd.set_defaults(func=cmd_project_stop)
 
     mcp = sub.add_parser("mcp", parents=[common], help="stdio MCP (Content-Length JSON-RPC). No HTTP MCP.")
+    mcp.add_argument(
+        "--exclude-domains",
+        default=os.environ.get("DEFOLD_MCP_EXCLUDE_DOMAINS"),
+        help="Comma-separated prefixes to hide from tools/list, e.g. atlas,tilemap.",
+    )
     mcp.set_defaults(func=cmd_mcp)
 
     mcp_config = sub.add_parser("mcp-config", parents=[common], help="Print Cursor/Codex stdio MCP config. Never an HTTP URL.")
     mcp_config.add_argument("--format", choices=("cursor", "codex"), default="cursor")
+    mcp_config.add_argument(
+        "--exclude-domains",
+        default=os.environ.get("DEFOLD_MCP_EXCLUDE_DOMAINS"),
+        help="Copied into the printed command args.",
+    )
     mcp_config.set_defaults(func=cmd_mcp_config)
     return parser
 

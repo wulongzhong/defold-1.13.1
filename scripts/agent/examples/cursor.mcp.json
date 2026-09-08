@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "defold-agent": {
+      "command": "python",
+      "args": [
+        "scripts/agent/defold_agent.py",
+        "mcp"
+      ]
+    }
+  }
+}

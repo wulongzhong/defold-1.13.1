@@ -9,12 +9,15 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 from agent_ops import dispatch_command
+
+_EXCLUDE_DOMAINS: List[str] = []
 
 
 PROTOCOL_VERSIONS = ("2025-03-26", "2024-11-05")
@@ -69,6 +72,9 @@ TOOLS = [
     ("material_manage", "Create/get/list materials and set programs."),
     ("camera_manage", "Add/get/remove an embedded camera on a .go."),
     ("render_manage", "Create/get/list .render files and set the render script."),
+    ("tilesource_manage", "Create/get/list tilesources, images, and animations."),
+    ("font_manage", "Create/get/list .font files and set the TTF."),
+    ("sound_manage", "Create/get/list .sound files and set the sample."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
@@ -317,6 +323,57 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "script": {"type": "string"},
         },
     },
+    "tilesource_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {
+                "type": "string",
+                "enum": ["create", "get", "list", "remove", "set_property", "add_animation", "set_image"],
+            },
+            "path": {"type": "string"},
+            "id": {"type": "string"},
+            "image": {"type": "string"},
+            "name": {"type": "string"},
+            "start_tile": {"type": "integer"},
+            "end_tile": {"type": "integer"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "font_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property", "set_font"]},
+            "path": {"type": "string"},
+            "font": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "sound_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property", "set_sound"]},
+            "path": {"type": "string"},
+            "sound": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
     "collection_open": {
         "type": "object",
         "additionalProperties": False,
@@ -401,6 +458,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "offset": {"type": "integer", "default": 0, "description": "Skip this many lines from the end."},
             "limit": {"type": "integer", "default": 200},
+            "source": {"type": "string", "enum": ["all", "editor", "engine"], "default": "all"},
         },
     },
     "editor_preview": {
@@ -493,6 +551,8 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "text": {"type": "string"},
             "query": {"type": "string"},
             "ext": {"type": "string"},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
         },
     },
     "project_manage": {
@@ -613,6 +673,30 @@ PROMPTS = [
         "arguments": [{"name": "frames", "required": False}],
     },
 ]
+
+
+def normalize_domains(raw: Any) -> List[str]:
+    if raw is None:
+        raw = os.environ.get("DEFOLD_MCP_EXCLUDE_DOMAINS", "")
+    if isinstance(raw, str):
+        return [part.strip() for part in raw.split(",") if part.strip()]
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def configure_mcp(exclude_domains: Optional[Sequence[str]] = None) -> None:
+    global _EXCLUDE_DOMAINS
+    _EXCLUDE_DOMAINS = normalize_domains(exclude_domains)
+
+
+def tool_excluded(name: str) -> bool:
+    for domain in _EXCLUDE_DOMAINS:
+        if name == domain or name.startswith(f"{domain}_"):
+            return True
+    return False
+
+
+def listed_tools() -> List[Tuple[str, str]]:
+    return [(name, description) for name, description in TOOLS if not tool_excluded(name)]
 
 
 def _tool_schema(name: str, description: str) -> Dict[str, Any]:
@@ -783,10 +867,18 @@ def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def mcp_client_config(agent_py: Path, project: Optional[Path], kind: str) -> str:
+def mcp_client_config(
+    agent_py: Path,
+    project: Optional[Path],
+    kind: str,
+    exclude_domains: Optional[Sequence[str]] = None,
+) -> str:
     args = [str(agent_py.resolve()), "mcp"]
     if project:
         args.extend(["--project", str(project.resolve())])
+    excluded = normalize_domains(exclude_domains) if exclude_domains is not None else []
+    if excluded:
+        args.extend(["--exclude-domains", ",".join(excluded)])
     if kind == "codex":
         quoted = ", ".join(json.dumps(item) for item in args)
         return (
@@ -879,12 +971,22 @@ def handle_rpc(message: Dict[str, Any], project: Path, timeout: float) -> Option
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
-            "result": {"tools": [_tool_schema(name, description) for name, description in TOOLS]},
+            "result": {"tools": [_tool_schema(name, description) for name, description in listed_tools()]},
         }
     if method == "tools/call":
         name = params.get("name")
         arguments = params.get("arguments") or {}
-        result = dispatch_command(project, name, arguments, timeout)
+        if tool_excluded(str(name)):
+            result = {
+                "status": "error",
+                "readiness": "ready",
+                "error": {
+                    "code": "NOT_ALLOWED",
+                    "message": f"Tool '{name}' is excluded by --exclude-domains",
+                },
+            }
+        else:
+            result = dispatch_command(project, name, arguments, timeout)
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
@@ -904,7 +1006,8 @@ def handle_rpc(message: Dict[str, Any], project: Path, timeout: float) -> Option
     }
 
 
-def serve_stdio(project: Path, timeout: float) -> int:
+def serve_stdio(project: Path, timeout: float, exclude_domains: Optional[Sequence[str]] = None) -> int:
+    configure_mcp(exclude_domains)
     while True:
         message = read_message()
         if message is None:

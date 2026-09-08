@@ -55,6 +55,7 @@
    "editor_preview"
    "editor_state"
    "filesystem_manage"
+   "font_manage"
    "gameobject_create"
    "gameobject_get_properties"
    "gameobject_manage"
@@ -72,14 +73,39 @@
    "script_patch"
    "session_activate"
    "session_manage"
-   "tilemap_manage"])
+   "sound_manage"
+   "tilemap_manage"
+   "tilesource_manage"])
 
 (def ^:private command-aliases
   {"add_component" "component_add"
    "add_instance" "gameobject_create"
    "create_gameobject" "gameobject_create"
+   "create_node" "gameobject_create"
    "create_script" "script_create"
-   "patch_script" "script_patch"})
+   "node_create" "gameobject_create"
+   "node_get_properties" "gameobject_get_properties"
+   "node_set_property" "gameobject_manage"
+   "patch_script" "script_patch"
+   "scene_get_hierarchy" "collection_get_hierarchy"
+   "scene_open" "collection_open"
+   "scene_save" "collection_save"})
+
+(def ^:private read-ops
+  #{"find" "get" "get_roots" "list" "read" "read_text" "search" "selection_get" "settings_get" "state"})
+
+(def ^:private always-read-commands
+  #{"api_manage"
+    "collection_get_hierarchy"
+    "collection_open"
+    "editor_preview"
+    "editor_state"
+    "gameobject_get_properties"
+    "logs_read"
+    "project_build"
+    "project_check"
+    "session_activate"
+    "session_manage"})
 
 (defn- fail!
   ([code message]
@@ -111,6 +137,24 @@
               (name command)
               (str command))]
     (get command-aliases raw raw)))
+
+(defn- alias-params [raw params]
+  (if (and (= "node_set_property" raw)
+           (not (or (get params :op) (get params "op"))))
+    (assoc params :op "set_property")
+    params))
+
+(defn- authoring-write? [command params]
+  (let [op (or (get params :op) (get params "op"))]
+    (cond
+      (contains? always-read-commands command)
+      false
+
+      (string? op)
+      (not (contains? read-ops op))
+
+      :else
+      (not= "batch_execute" command))))
 
 (defn- json-value [v]
   (cond
@@ -231,7 +275,9 @@
   (project/get-resource-node (:project ctx) "/game.project"))
 
 (defn- readiness [_ctx]
-  "ready")
+  (if (app-view/building?)
+    "building"
+    "ready"))
 
 (defn- capture-created-node [f]
   (let [created (atom nil)]
@@ -824,6 +870,15 @@
 (defn- cmd-render-manage [ctx params]
   (cmd-file-domain-manage ctx params "render"))
 
+(defn- cmd-tilesource-manage [ctx params]
+  (cmd-file-domain-manage ctx params "tilesource"))
+
+(defn- cmd-font-manage [ctx params]
+  (cmd-file-domain-manage ctx params "font"))
+
+(defn- cmd-sound-manage [ctx params]
+  (cmd-file-domain-manage ctx params "sound"))
+
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
         component (or (optional-string params :component)
@@ -881,6 +936,7 @@
    "editor_preview" cmd-editor-preview
    "editor_state" cmd-editor-state
    "filesystem_manage" cmd-filesystem-manage
+   "font_manage" cmd-font-manage
    "gameobject_create" cmd-gameobject-create
    "gameobject_get_properties" cmd-gameobject-get-properties
    "gameobject_manage" cmd-gameobject-manage
@@ -898,7 +954,9 @@
    "script_patch" cmd-script-patch
    "session_activate" cmd-session-activate
    "session_manage" cmd-session-manage
-   "tilemap_manage" cmd-tilemap-manage})
+   "sound_manage" cmd-sound-manage
+   "tilemap_manage" cmd-tilemap-manage
+   "tilesource_manage" cmd-tilesource-manage})
 
 (defn- envelope [ctx request-id status-kw payload]
   (cond-> {:status (name status-kw)
@@ -913,11 +971,20 @@
   Returns {:status \"ok\"|\"error\" :readiness string :data map :error map}."
   [ctx command params]
   (let [request-id (or (get params :request_id) (get params :request-id))
-        params (dissoc params :request_id :request-id)
+        raw (if (keyword? command)
+              (name command)
+              (str command))
+        params (alias-params raw (dissoc (or params {}) :request_id :request-id))
         command-n (command-name command)]
     (try
+      (when (and (authoring-write? command-n params)
+                 (= "building" (readiness ctx)))
+        (fail! "EDITOR_NOT_READY"
+               "Authoring writes are blocked while building."
+               "Wait for the editor build to finish."
+               {:sub_code "building"}))
       (if-let [f (get command-fns command-n)]
-        (envelope ctx request-id :ok (f ctx (or params {})))
+        (envelope ctx request-id :ok (f ctx params))
         (envelope ctx request-id :error {:code "UNKNOWN_COMMAND"
                                          :message (str "Unknown command: " command-n)
                                          :data {:suggestions command-names}}))

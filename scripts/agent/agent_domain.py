@@ -4,7 +4,7 @@
 #
 # You may obtain a copy of the License, together with FAQs at
 # https://www.defold.com/license
-"""Disk fallbacks for atlas / tilemap / gui / input / particlefx / material / camera / render."""
+"""Disk fallbacks for atlas / tilemap / tilesource / font / sound / gui / input / particlefx / material / camera / render."""
 
 from __future__ import annotations
 
@@ -20,6 +20,9 @@ SKIP_DIRS = {".internal", "build", ".git", ".editor"}
 DOMAIN_EXT = {
     "atlas_manage": "atlas",
     "tilemap_manage": "tilemap",
+    "tilesource_manage": "tilesource",
+    "font_manage": "font",
+    "sound_manage": "sound",
     "gui_manage": "gui",
     "particlefx_manage": "particlefx",
     "material_manage": "material",
@@ -71,6 +74,29 @@ FALLBACK_TEMPLATES = {
     ),
     "render": 'script: ""\n',
     "input_binding": "",
+    "tilesource": (
+        'image: "{image}"\n'
+        "tile_width: 16\n"
+        "tile_height: 16\n"
+        "tile_margin: 0\n"
+        "tile_spacing: 0\n"
+        'collision: ""\n'
+        'material_tag: "tile"\n'
+        'collision_groups: "default"\n'
+        "animations {\n"
+        '  id: "anim"\n'
+        "  start_tile: 1\n"
+        "  end_tile: 1\n"
+        "}\n"
+        "extrude_borders: 2\n"
+        "sprite_trim_mode: SPRITE_TRIM_MODE_OFF\n"
+    ),
+    "font": (
+        'font: "{font}"\n'
+        'material: "/builtins/fonts/font.material"\n'
+        "size: 15\n"
+    ),
+    "sound": 'sound: "{sound}"\nlooping: 0\ngroup: "master"\ngain: 1.0\n',
 }
 
 CAMERA_BLOCK = """
@@ -96,9 +122,22 @@ def load_template(ext: str, name: str, extras: Optional[Dict[str, str]] = None) 
         candidate = parent / "editor" / "resources" / "templates" / f"template.{ext}"
         if candidate.is_file():
             text = candidate.read_text(encoding="utf-8")
-            return text.replace("{{NAME}}", name).replace("{name}", name).replace("{tile_set}", extras.get("tile_set", ""))
+            return (
+                text.replace("{{NAME}}", name)
+                .replace("{name}", name)
+                .replace("{tile_set}", extras.get("tile_set", ""))
+                .replace("{image}", extras.get("image", ""))
+                .replace("{font}", extras.get("font", "/builtins/fonts/vera_mo_bd.ttf"))
+                .replace("{sound}", extras.get("sound", ""))
+            )
     text = FALLBACK_TEMPLATES[ext]
-    return text.format(name=name, tile_set=extras.get("tile_set", ""))
+    return text.format(
+        name=name,
+        tile_set=extras.get("tile_set", ""),
+        image=extras.get("image", ""),
+        font=extras.get("font", "/builtins/fonts/vera_mo_bd.ttf"),
+        sound=extras.get("sound", ""),
+    )
 
 
 def list_files(project: Path, ext: str) -> List[str]:
@@ -210,6 +249,18 @@ def summarize(command: str, path: str, text: str) -> Dict[str, Any]:
         data["script"] = scalar(text, "script")
     elif command == "input_binding_manage":
         data["bindings"] = parse_bindings(text)
+    elif command == "tilesource_manage":
+        data["image"] = scalar(text, "image")
+        data["animations"] = quoted(text, "id")
+        data["tile_width"] = scalar(text, "tile_width")
+        data["tile_height"] = scalar(text, "tile_height")
+    elif command == "font_manage":
+        data["font"] = scalar(text, "font")
+        data["material"] = scalar(text, "material")
+        data["size"] = scalar(text, "size")
+    elif command == "sound_manage":
+        data["sound"] = scalar(text, "sound")
+        data["group"] = scalar(text, "group")
     return data
 
 
@@ -236,8 +287,17 @@ def handle_file_domain(project: Path, command: str, params: Dict[str, Any]) -> D
             )
         if op == "create":
             path = require_path(params)
-            extras = {"tile_set": str(params.get("tile_set") or params.get("tilesource") or "")}
+            extras = {
+                "tile_set": str(params.get("tile_set") or params.get("tilesource") or ""),
+                "image": str(params.get("image") or ""),
+                "font": str(params.get("font") or "/builtins/fonts/vera_mo_bd.ttf"),
+                "sound": str(params.get("sound") or ""),
+            }
             text = params.get("content") or load_template(ext, params.get("name") or _stem(path), extras)
+            for key in ("image", "font", "sound", "tile_set"):
+                value = extras.get(key)
+                if value:
+                    text = set_scalar(text, key, sanitize_proj_path(value) if key != "font" or value.startswith("/") else value)
             write_new(project, path, text)
             return ok_envelope({"path": path, "created": True, "undoable": False, "source": "disk"})
         path = require_path(params)
@@ -280,6 +340,9 @@ def known_ops(command: str) -> List[str]:
         "particlefx_manage": ["add_emitter"],
         "material_manage": ["set_program"],
         "render_manage": ["set_script"],
+        "tilesource_manage": ["add_animation", "set_image"],
+        "font_manage": ["set_font"],
+        "sound_manage": ["set_sound"],
     }
     return ["create", "get", "list", "remove", "set_property", *extra.get(command, [])]
 
@@ -350,6 +413,17 @@ def add_block(command: str, op: str, params: Dict[str, Any]) -> Optional[str]:
             if not input_name or not action:
                 raise KeyError("input/action")
             return f'{kind} {{\n  input: {input_name}\n  action: "{action}"\n}}\n'
+    if command == "tilesource_manage" and op == "add_animation":
+        ident = params.get("id") or "anim"
+        start_tile = params.get("start_tile") or 1
+        end_tile = params.get("end_tile") or start_tile
+        return (
+            "animations {\n"
+            f'  id: "{ident}"\n'
+            f"  start_tile: {int(start_tile)}\n"
+            f"  end_tile: {int(end_tile)}\n"
+            "}\n"
+        )
     if command == "particlefx_manage" and op == "add_emitter":
         ident = params.get("id") or "emitter"
         return (
@@ -382,6 +456,24 @@ def apply_special_set(project: Path, command: str, op: str, params: Dict[str, An
             return error_envelope("MISSING_PARAM", "set_script needs script")
         rewrite(project, path, set_scalar(text, "script", sanitize_proj_path(str(script))))
         return ok_envelope({"path": path, "script": sanitize_proj_path(str(script)), "undoable": False, "source": "disk"})
+    if command == "tilesource_manage" and op == "set_image":
+        image = params.get("image") or params.get("value")
+        if not image:
+            return error_envelope("MISSING_PARAM", "set_image needs image")
+        rewrite(project, path, set_scalar(text, "image", sanitize_proj_path(str(image))))
+        return ok_envelope({"path": path, "image": sanitize_proj_path(str(image)), "undoable": False, "source": "disk"})
+    if command == "font_manage" and op == "set_font":
+        font = params.get("font") or params.get("value")
+        if not font:
+            return error_envelope("MISSING_PARAM", "set_font needs font")
+        rewrite(project, path, set_scalar(text, "font", sanitize_proj_path(str(font))))
+        return ok_envelope({"path": path, "font": sanitize_proj_path(str(font)), "undoable": False, "source": "disk"})
+    if command == "sound_manage" and op == "set_sound":
+        sound = params.get("sound") or params.get("value")
+        if not sound:
+            return error_envelope("MISSING_PARAM", "set_sound needs sound")
+        rewrite(project, path, set_scalar(text, "sound", sanitize_proj_path(str(sound))))
+        return ok_envelope({"path": path, "sound": sanitize_proj_path(str(sound)), "undoable": False, "source": "disk"})
     if command == "material_manage" and op == "set_program":
         text = text
         if params.get("vertex_program"):
@@ -434,7 +526,7 @@ def handle_domain_command(project: Path, command: str, params: Dict[str, Any]) -
     if command not in DOMAIN_EXT:
         return error_envelope("UNKNOWN_COMMAND", f"Unknown domain command: {command}")
     op = params.get("op")
-    if op in {"set_tile_set", "set_script", "set_program"}:
+    if op in {"set_tile_set", "set_script", "set_program", "set_image", "set_font", "set_sound"}:
         try:
             special = apply_special_set(project, command, op, params)
         except KeyError as error:

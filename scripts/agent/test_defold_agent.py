@@ -287,6 +287,8 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("ok", result["status"])
             self.assertIn("engine", result["data"])
             self.assertFalse(result["data"]["engine"].get("alive"))
+            self.assertEqual("stopped", result["data"]["game_status"]["status"])
+            self.assertFalse(result["data"]["game_status"]["helper_live"])
 
     def test_observe_uses_live_handshake(self):
         import json
@@ -593,6 +595,201 @@ class ToolQualityTest(unittest.TestCase):
             worker.join(timeout=2)
             self.assertTrue(written.is_file())
             self.assertEqual(b"png", written.read_bytes())
+
+    def test_aliases_and_disk_collection_ops(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            created = dispatch_command(
+                project,
+                "create_gameobject",
+                {"collection": "/main/main.collection", "id": "cube", "position": [1, 2, 3]},
+                2,
+            )
+            self.assertEqual("ok", created["status"])
+            found = dispatch_command(
+                project,
+                "gameobject_manage",
+                {"op": "find", "collection": "/main/main.collection", "id": "cu"},
+                2,
+            )
+            self.assertEqual("cube", found["data"]["matches"][0]["id"])
+            moved = dispatch_command(
+                project,
+                "node_set_property",
+                {"collection": "/main/main.collection", "id": "cube", "property": "position", "value": [4, 5, 6]},
+                2,
+            )
+            self.assertEqual("ok", moved["status"])
+            props = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertEqual([4.0, 5.0, 6.0], props["data"]["properties"]["position"])
+            (project / "main" / "cube.go").write_text("", encoding="utf-8")
+            (project / "main" / "cube.script").write_text("function init(self)\nend\n", encoding="utf-8")
+            attached = dispatch_command(
+                project,
+                "component_add",
+                {"path": "/main/cube.go", "type": "sprite", "id": "cube"},
+                2,
+            )
+            self.assertEqual("ok", attached["status"])
+            self.assertIn('type: "sprite"', (project / "main" / "cube.go").read_text(encoding="utf-8"))
+            scripted = dispatch_command(
+                project,
+                "script_attach",
+                {"collection": "/main/main.collection", "id": "cube", "path": "/main/cube.script"},
+                2,
+            )
+            self.assertEqual("ok", scripted["status"])
+            collection = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertIn("cube.script", collection)
+            renamed = dispatch_command(
+                project,
+                "gameobject_manage",
+                {"op": "rename", "collection": "/main/main.collection", "id": "cube", "name": "box"},
+                2,
+            )
+            self.assertEqual("ok", renamed["status"])
+            roots = dispatch_command(
+                project,
+                "collection_manage",
+                {"op": "get_roots", "path": "/main/main.collection"},
+                2,
+            )
+            self.assertEqual("box", roots["data"]["children"][0]["id"])
+            removed = dispatch_command(
+                project,
+                "collection_manage",
+                {"op": "remove_instance", "collection": "/main/main.collection", "id": "box"},
+                2,
+            )
+            self.assertEqual("ok", removed["status"])
+            self.assertNotIn('id: "box"', (project / "main" / "main.collection").read_text(encoding="utf-8"))
+
+    def test_search_offset_and_exclude_domains(self):
+        import tempfile
+        from pathlib import Path
+
+        from agent_mcp import configure_mcp, handle_rpc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "a.script").write_text("needle here\n", encoding="utf-8")
+            (project / "main" / "b.script").write_text("needle here\n", encoding="utf-8")
+            result = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "search", "query": "needle", "offset": 0, "limit": 1},
+                2,
+            )
+            self.assertEqual("ok", result["status"])
+            self.assertEqual(2, result["data"]["total"])
+            self.assertEqual(1, len(result["data"]["matches"]))
+            self.assertTrue(result["data"]["truncated"])
+            page = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "search", "query": "needle", "offset": 1, "limit": 1},
+                2,
+            )
+            self.assertEqual(1, len(page["data"]["matches"]))
+            self.assertNotEqual(result["data"]["matches"], page["data"]["matches"])
+            configure_mcp(["atlas"])
+            try:
+                listed = handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, project, 2)
+                names = [item["name"] for item in listed["result"]["tools"]]
+                self.assertNotIn("atlas_manage", names)
+                self.assertIn("runtime_observe", names)
+                called = handle_rpc(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 2,
+                        "method": "tools/call",
+                        "params": {"name": "atlas_manage", "arguments": {"op": "list"}},
+                    },
+                    project,
+                    2,
+                )
+                body = __import__("json").loads(called["result"]["content"][0]["text"])
+                self.assertEqual("NOT_ALLOWED", body["error"]["code"])
+            finally:
+                configure_mcp([])
+
+    def test_building_lock_blocks_writes(self):
+        import tempfile
+        from pathlib import Path
+
+        from agent_ops import BuildingLock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            with BuildingLock(project):
+                result = dispatch_command(project, "script_create", {"path": "/main/a.script"}, 2)
+            self.assertEqual("error", result["status"])
+            self.assertEqual("EDITOR_NOT_READY", result["error"]["code"])
+            self.assertEqual("building", result["error"]["data"]["sub_code"])
+            self.assertFalse((project / "main" / "a.script").exists())
+            created = dispatch_command(project, "script_create", {"path": "/main/a.script"}, 2)
+            self.assertEqual("ok", created["status"])
+
+    def test_tilesource_font_sound_disk(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            tiles = dispatch_command(
+                project,
+                "tilesource_manage",
+                {"op": "create", "path": "/main/tiles.tilesource", "image": "/main/tiles.png"},
+                2,
+            )
+            self.assertEqual("ok", tiles["status"])
+            dispatch_command(
+                project,
+                "tilesource_manage",
+                {"op": "add_animation", "path": "/main/tiles.tilesource", "id": "walk", "start_tile": 1, "end_tile": 4},
+                2,
+            )
+            got = dispatch_command(project, "tilesource_manage", {"op": "get", "path": "/main/tiles.tilesource"}, 2)
+            self.assertIn("walk", got["data"]["animations"])
+            font = dispatch_command(project, "font_manage", {"op": "create", "path": "/main/ui.font"}, 2)
+            self.assertEqual("ok", font["status"])
+            sound = dispatch_command(
+                project,
+                "sound_manage",
+                {"op": "create", "path": "/main/beep.sound", "sound": "/main/beep.ogg"},
+                2,
+            )
+            self.assertEqual("ok", sound["status"])
+            beep = dispatch_command(project, "sound_manage", {"op": "get", "path": "/main/beep.sound"}, 2)
+            self.assertEqual("/main/beep.ogg", beep["data"]["sound"])
+
+    def test_logs_read_source_engine(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            log = project / ".internal" / "agent" / "engine.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text("only-engine\n", encoding="utf-8")
+            result = dispatch_command(project, "logs_read", {"source": "engine", "limit": 10}, 1)
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("engine-log", result["data"]["source"])
+            self.assertIn("only-engine", result["data"]["lines"][0])
+            blocked = dispatch_command(project, "logs_read", {"source": "editor"}, 1)
+            self.assertEqual("error", blocked["status"])
+            self.assertEqual("EDITOR_UNREACHABLE", blocked["error"]["code"])
 
     def test_project_build_does_not_launch(self):
         import tempfile

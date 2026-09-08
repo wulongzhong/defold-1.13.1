@@ -17,6 +17,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agent_errors import apply_alias, authoring_write
+
 
 SKIP_DIRS = {".internal", "build", ".git", ".editor"}
 
@@ -55,7 +57,13 @@ def error_envelope(code: str, message: str, hint: Optional[str] = None, **extra:
         err["hint"] = hint
     if extra:
         err["data"] = extra
-    readiness = "no_editor" if code == "EDITOR_UNREACHABLE" else "ready"
+    sub = extra.get("sub_code")
+    if code == "EDITOR_UNREACHABLE":
+        readiness = "no_editor"
+    elif sub in {"building", "observing", "running", "no_runtime", "no_editor", "no_collection"}:
+        readiness = sub
+    else:
+        readiness = "ready"
     return envelope("error", error=err, readiness=readiness)
 
 
@@ -187,6 +195,325 @@ def parse_gameobject_properties(text: str, path: str, go_id: str) -> Optional[Di
     }
 
 
+RE_INSTANCE_HEADER = re.compile(r"(?:embedded_instances|instances|collection_instances)\s*\{")
+RE_QUOTED = re.compile(r'"((?:\\.|[^"\\])*)"')
+
+COMPONENT_EMBEDDED = {
+    "camera": (
+        'aspect_ratio: 1.0\\n"\n'
+        '  "fov: 0.785\\n"\n'
+        '  "near_z: 0.1\\n"\n'
+        '  "far_z: 1000.0\\n"\n'
+        '  "'
+    ),
+    "sprite": (
+        'default_animation: \\"\\"\\n"\n'
+        '  "material: \\"/builtins/materials/sprite.material\\"\\n"\n'
+        '  "'
+    ),
+    "label": (
+        'text: \\"Label\\"\\n"\n'
+        '  "font: \\"/builtins/fonts/default.font\\"\\n"\n'
+        '  "'
+    ),
+    "sound": 'sound: \\"\\"\\n"\n  "',
+    "collisionobject": (
+        'type: COLLISION_OBJECT_TYPE_KINEMATIC\\n"\n'
+        '  "mass: 0.0\\n"\n'
+        '  "'
+    ),
+}
+
+
+def match_brace(text: str, open_at: int) -> Optional[int]:
+    depth = 0
+    for index in range(open_at, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def enclosing_span(text: str, pos: int) -> Optional[Tuple[int, int]]:
+    depth = 0
+    open_at = None
+    for index in range(pos, -1, -1):
+        char = text[index]
+        if char == "}":
+            depth += 1
+        elif char == "{":
+            if depth == 0:
+                open_at = index
+                break
+            depth -= 1
+    if open_at is None:
+        return None
+    close_at = match_brace(text, open_at)
+    if close_at is None:
+        return None
+    header = text.rfind("\n", 0, open_at)
+    start = 0 if header < 0 else header + 1
+    return start, close_at + 1
+
+
+def extract_brace_block(text: str, start: int) -> Optional[str]:
+    span = enclosing_span(text, start)
+    if not span:
+        return None
+    return text[span[0] : span[1]]
+
+
+def unescape_proto(value: str) -> str:
+    return value.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\")
+
+
+def escape_proto(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def decode_data_field(block: str) -> Optional[str]:
+    match = re.search(r"\bdata:\s*", block)
+    if not match:
+        return None
+    rest = block[match.end() :]
+    parts: List[str] = []
+    pos = 0
+    while pos < len(rest):
+        while pos < len(rest) and rest[pos] in " \t\r\n":
+            pos += 1
+        if pos >= len(rest) or rest[pos] != '"':
+            break
+        quoted = RE_QUOTED.match(rest, pos)
+        if not quoted:
+            break
+        parts.append(unescape_proto(quoted.group(1)))
+        pos = quoted.end()
+    return "".join(parts)
+
+
+def encode_data_lines(go_text: str) -> str:
+    if not go_text:
+        return '  data: ""\n'
+    lines = go_text.splitlines(keepends=True)
+    chunks: List[str] = []
+    for index, line in enumerate(lines):
+        escaped = escape_proto(line)
+        if index == 0:
+            chunks.append(f'  data: "{escaped}"')
+        else:
+            chunks.append(f'  "{escaped}"')
+    chunks.append('  ""')
+    return "\n".join(chunks) + "\n"
+
+
+def replace_data_field(block: str, go_text: str) -> str:
+    encoded = encode_data_lines(go_text)
+    match = re.search(r"\bdata:\s*", block)
+    if not match:
+        close_at = block.rfind("}")
+        return block[:close_at] + encoded + block[close_at:]
+    rest = block[match.end() :]
+    pos = 0
+    while pos < len(rest):
+        while pos < len(rest) and rest[pos] in " \t\r\n":
+            pos += 1
+        if pos >= len(rest) or rest[pos] != '"':
+            break
+        quoted = RE_QUOTED.match(rest, pos)
+        if not quoted:
+            break
+        pos = quoted.end()
+    return block[: match.start()] + encoded + rest[pos:]
+
+
+def iter_instance_spans(text: str) -> List[Tuple[int, int, str]]:
+    spans: List[Tuple[int, int, str]] = []
+    for match in RE_INSTANCE_HEADER.finditer(text):
+        open_at = text.find("{", match.start())
+        close_at = match_brace(text, open_at) if open_at >= 0 else None
+        if close_at is None:
+            continue
+        spans.append((match.start(), close_at + 1, text[match.start() : close_at + 1]))
+    return spans
+
+
+def first_quoted_id(block: str) -> Optional[str]:
+    match = re.search(r'id:\s*"([^"]+)"', block)
+    return match.group(1) if match else None
+
+
+def find_instance_span(text: str, go_id: str) -> Tuple[int, int, str]:
+    for start, end, block in iter_instance_spans(text):
+        if first_quoted_id(block) == go_id:
+            return start, end, block
+    raise FileNotFoundError(go_id)
+
+
+def instance_prototype(block: str) -> Optional[str]:
+    match = re.search(r'prototype:\s*"([^"]+)"', block)
+    return match.group(1) if match else None
+
+
+def replace_instance_block(text: str, go_id: str, new_block: str) -> str:
+    start, end, _block = find_instance_span(text, go_id)
+    return text[:start] + new_block + text[end:]
+
+
+def replace_instance_id(text: str, old_id: str, new_id: str) -> str:
+    start, end, block = find_instance_span(text, old_id)
+    if f'id: "{new_id}"' in text and new_id != old_id:
+        raise ValueError(f"Game object '{new_id}' already exists")
+    return text[:start] + block.replace(f'id: "{old_id}"', f'id: "{new_id}"', 1) + text[end:]
+
+
+def remove_instance_block(text: str, go_id: str) -> str:
+    start, end, _block = find_instance_span(text, go_id)
+    return text[:start] + text[end:]
+
+
+def set_position_in_block(block: str, value: Any) -> str:
+    if isinstance(value, dict):
+        xyz = [value.get("x", 0), value.get("y", 0), value.get("z", 0)]
+    elif isinstance(value, (list, tuple)):
+        xyz = list(value)
+    else:
+        raise ValueError("position must be [x, y, z]")
+    x, y, z = (xyz + [0, 0, 0])[:3]
+    new_pos = f"position {{\n    x: {float(x)}\n    y: {float(y)}\n    z: {float(z)}\n  }}"
+    if re.search(r"position\s*\{", block):
+        return re.sub(r"position\s*\{[^{}]*\}", new_pos, block, count=1)
+    close_at = block.rfind("}")
+    return block[:close_at] + "  " + new_pos + "\n" + block[close_at:]
+
+
+def component_snippet(params: Dict[str, Any]) -> Tuple[str, str]:
+    path = params.get("path")
+    if path and str(path).endswith(".go"):
+        path = None
+    type_name = params.get("type") or params.get("component_type")
+    ident = params.get("component") or params.get("component_id")
+    if path and (not type_name or type_name == "script"):
+        ident = ident or Path(str(path)).stem
+        return (
+            f'components {{\n  id: "{ident}"\n  component: "{sanitize_proj_path(str(path))}"\n}}\n',
+            ident,
+        )
+    type_name = type_name or "sprite"
+    ident = ident or type_name
+    if path:
+        return (
+            f'components {{\n  id: "{ident}"\n  component: "{sanitize_proj_path(str(path))}"\n}}\n',
+            ident,
+        )
+    payload = COMPONENT_EMBEDDED.get(type_name, '\\n"\n  "')
+    return (
+        f'embedded_components {{\n  id: "{ident}"\n  type: "{type_name}"\n  data: "{payload}"\n}}\n',
+        ident,
+    )
+
+
+def append_component_text(text: str, snippet: str) -> str:
+    if not text.endswith("\n"):
+        text += "\n"
+    return text + (snippet if snippet.endswith("\n") else snippet + "\n")
+
+
+def remove_component_from_go(text: str, component_id: str) -> str:
+    marker = f'id: "{component_id}"'
+    start = text.find(marker)
+    if start < 0:
+        raise FileNotFoundError(component_id)
+    block = extract_brace_block(text, start)
+    if not block:
+        raise FileNotFoundError(component_id)
+    return text.replace(block, "", 1)
+
+
+def building_lock_path(project: Path) -> Path:
+    return project / ".internal" / "agent" / "building.lock"
+
+
+class BuildingLock:
+    def __init__(self, project: Path):
+        self.path = building_lock_path(project)
+
+    def __enter__(self) -> "BuildingLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("building\n", encoding="utf-8")
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
+def compute_readiness(project: Path) -> str:
+    control = project / ".internal" / "agent" / "control"
+    if (control / "dump.request").is_file() and not (control / "dump.ready").is_file():
+        return "observing"
+    if building_lock_path(project).is_file():
+        return "building"
+    try:
+        from agent_runtime import live_status
+
+        if live_status(project).get("alive"):
+            return "running"
+    except Exception:
+        pass
+    if not (project / "game.project").is_file():
+        return "no_collection"
+    if read_editor_endpoint(project) is None:
+        return "no_editor"
+    return "ready"
+
+
+def reject_write_if_gated(project: Path, command: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not authoring_write(command, params):
+        return None
+    state = compute_readiness(project)
+    if state not in {"building", "observing"}:
+        return None
+    return error_envelope(
+        "EDITOR_NOT_READY",
+        f"Authoring writes are blocked while {state}.",
+        "Wait for the build or observe handshake to finish.",
+        sub_code=state,
+    )
+
+
+def overlay_readiness(project: Path, result: Dict[str, Any]) -> Dict[str, Any]:
+    computed = compute_readiness(project)
+    if computed in {"building", "observing"}:
+        result["readiness"] = computed
+        return result
+    current = result.get("readiness")
+    if computed == "running":
+        result["readiness"] = "running"
+        return result
+    if current in {"no_runtime", "no_editor", "no_collection"}:
+        return result
+    result["readiness"] = computed
+    return result
+
+
+def game_status_payload(project: Path) -> Dict[str, Any]:
+    from agent_runtime import live_status
+
+    engine = live_status(project)
+    alive = bool(engine.get("alive"))
+    return {
+        "status": "live" if alive else "stopped",
+        "helper_live": False,
+        "session_active": alive,
+    }
+
+
 def parse_collection_hierarchy(text: str, path: str) -> Dict[str, Any]:
     children = [{"id": match, "type": "gameobject"} for match in RE_COLLECTION_ID.findall(text)]
     return {
@@ -278,6 +605,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                     "selection": [],
                     "source": "disk",
                     "commands": DISK_COMMANDS,
+                    "game_status": game_status_payload(project),
                 },
                 readiness="no_editor",
             )
@@ -294,6 +622,18 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             data["truncated"] = offset + limit < len(children)
             data["children"] = children[offset : offset + limit]
             return ok_envelope(data)
+        if command == "collection_open":
+            path = params.get("path") or params.get("collection")
+            if not path:
+                return error_envelope("MISSING_PARAM", "collection_open needs path")
+            _read_text(project, path)
+            return ok_envelope({"path": sanitize_proj_path(path), "opened": False, "source": "disk"}, readiness="no_editor")
+        if command == "collection_save":
+            path = params.get("path") or params.get("collection")
+            if not path:
+                return error_envelope("MISSING_PARAM", "collection_save needs path")
+            _read_text(project, path)
+            return ok_envelope({"path": sanitize_proj_path(path), "saved": True, "source": "disk", "undoable": False})
         if command == "gameobject_get_properties":
             path = params.get("collection") or params.get("path")
             go_id = params.get("id")
@@ -345,6 +685,8 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 if not query:
                     return error_envelope("MISSING_PARAM", "search needs query")
                 ext = params.get("ext")
+                offset = max(int(params.get("offset") or 0), 0)
+                limit = max(int(params.get("limit") or 100), 1)
                 matches: List[str] = []
                 for root, dirs, files in os.walk(project):
                     dirs[:] = [name for name in dirs if name not in SKIP_DIRS]
@@ -356,21 +698,140 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                             continue
                         text = file_path.read_text(encoding="utf-8", errors="replace")
                         if query in text:
-                            rel = "/" + file_path.relative_to(project).as_posix()
-                            matches.append(rel)
-                            if len(matches) >= 100:
-                                return ok_envelope(
-                                    {"matches": matches, "truncated": True, "limit": 100, "source": "disk"}
-                                )
-                return ok_envelope({"matches": matches, "truncated": False, "limit": 100, "source": "disk"})
+                            matches.append("/" + file_path.relative_to(project).as_posix())
+                sliced = matches[offset : offset + limit]
+                return ok_envelope(
+                    {
+                        "matches": sliced,
+                        "total": len(matches),
+                        "offset": offset,
+                        "limit": limit,
+                        "truncated": offset + len(sliced) < len(matches),
+                        "source": "disk",
+                    }
+                )
             return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["read_text", "write_text", "search"])
-        if command == "collection_manage" and params.get("op") == "create":
-            path = params.get("path")
-            if not path:
-                return error_envelope("MISSING_PARAM", "Missing path")
-            name = params.get("name") or Path(path).stem
-            _write_text(project, path, COLLECTION_TEMPLATE.format(name=name), overwrite=False)
-            return ok_envelope({"path": sanitize_proj_path(path), "source": "disk"})
+        if command == "collection_manage":
+            op = params.get("op")
+            if op == "create":
+                path = params.get("path")
+                if not path:
+                    return error_envelope("MISSING_PARAM", "Missing path")
+                name = params.get("name") or Path(path).stem
+                _write_text(project, path, COLLECTION_TEMPLATE.format(name=name), overwrite=False)
+                return ok_envelope({"path": sanitize_proj_path(path), "source": "disk", "undoable": False})
+            if op == "add_instance":
+                return disk_command(project, "gameobject_create", params)
+            if op == "remove_instance":
+                path = params.get("collection") or params.get("path")
+                go_id = params.get("id")
+                if not path or not go_id:
+                    return error_envelope("MISSING_PARAM", "remove_instance needs collection and id")
+                text = remove_instance_block(_read_text(project, path), str(go_id))
+                _write_text(project, path, text, overwrite=True)
+                return ok_envelope({"deleted": True, "id": go_id, "undoable": False, "source": "disk"})
+            if op == "get_roots":
+                return disk_command(
+                    project,
+                    "collection_get_hierarchy",
+                    {**params, "limit": params.get("limit") or 50},
+                )
+            return error_envelope(
+                "UNKNOWN_OP",
+                f"Unknown op: {op}",
+                suggestions=["create", "add_instance", "remove_instance", "get_roots"],
+            )
+        if command == "gameobject_manage":
+            op = params.get("op")
+            path = params.get("collection") or params.get("path")
+            go_id = params.get("id")
+            if op == "find":
+                if not path or not go_id:
+                    return error_envelope("MISSING_PARAM", "find needs collection and id")
+                tree = parse_collection_hierarchy(_read_text(project, path), sanitize_proj_path(path))
+                needle = str(go_id)
+                matches = [child for child in tree.get("children") or [] if needle in str(child.get("id"))]
+                return ok_envelope({"matches": matches, "source": "disk"})
+            if not path or not go_id:
+                return error_envelope("MISSING_PARAM", "gameobject_manage needs collection and id")
+            if op == "delete":
+                return disk_command(project, "collection_manage", {**params, "op": "remove_instance"})
+            if op == "rename":
+                name = params.get("name")
+                if not name:
+                    return error_envelope("MISSING_PARAM", "rename needs name")
+                text = replace_instance_id(_read_text(project, path), str(go_id), str(name))
+                _write_text(project, path, text, overwrite=True)
+                return ok_envelope({"id": name, "renamed": True, "undoable": False, "source": "disk"})
+            if op == "set_property":
+                key = params.get("property") or params.get("key")
+                if not key:
+                    return error_envelope("MISSING_PARAM", "set_property needs property")
+                text = _read_text(project, path)
+                start, end, block = find_instance_span(text, str(go_id))
+                if str(key) == "position":
+                    block = set_position_in_block(block, params.get("value"))
+                elif str(key) == "id":
+                    return disk_command(project, "gameobject_manage", {**params, "op": "rename", "name": params.get("value")})
+                else:
+                    raise ValueError(f"Unsupported disk property: {key}")
+                _write_text(project, path, text[:start] + block + text[end:], overwrite=True)
+                return ok_envelope(
+                    {"id": go_id, "property": key, "value": params.get("value"), "undoable": False, "source": "disk"}
+                )
+            return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["delete", "rename", "set_property", "find"])
+        if command in {"component_add", "script_attach"}:
+            if command == "script_attach":
+                params = {**params, "type": "script"}
+            collection = params.get("collection")
+            go_id = params.get("id")
+            go_path = params.get("path") if str(params.get("path") or "").endswith(".go") else None
+            snippet, ident = component_snippet(params)
+            if go_path:
+                text = append_component_text(_read_text(project, go_path), snippet)
+                _write_text(project, go_path, text, overwrite=True)
+                return ok_envelope(
+                    {"id": go_id or Path(go_path).stem, "component": ident, "path": sanitize_proj_path(go_path), "undoable": False, "source": "disk"}
+                )
+            if not collection or not go_id:
+                return error_envelope("MISSING_PARAM", f"{command} needs collection and id, or a .go path")
+            text = _read_text(project, collection)
+            _start, _end, block = find_instance_span(text, str(go_id))
+            proto = instance_prototype(block)
+            if proto:
+                proto_text = append_component_text(_read_text(project, proto), snippet)
+                _write_text(project, proto, proto_text, overwrite=True)
+                return ok_envelope(
+                    {"id": go_id, "component": ident, "path": sanitize_proj_path(proto), "undoable": False, "source": "disk"}
+                )
+            go_text = decode_data_field(block) or ""
+            new_block = replace_data_field(block, append_component_text(go_text, snippet))
+            _write_text(project, collection, replace_instance_block(text, str(go_id), new_block), overwrite=True)
+            return ok_envelope({"id": go_id, "component": ident, "undoable": False, "source": "disk"})
+        if command == "component_manage":
+            op = params.get("op")
+            collection = params.get("collection") or params.get("path")
+            go_id = params.get("id")
+            component = params.get("component")
+            if not collection or not go_id or not component:
+                return error_envelope("MISSING_PARAM", "component_manage needs collection, id, and component")
+            if op == "remove":
+                text = _read_text(project, collection)
+                if str(collection).endswith(".go"):
+                    _write_text(project, collection, remove_component_from_go(text, str(component)), overwrite=True)
+                    return ok_envelope({"deleted": True, "id": go_id, "component": component, "undoable": False, "source": "disk"})
+                _start, _end, block = find_instance_span(text, str(go_id))
+                proto = instance_prototype(block)
+                if proto:
+                    _write_text(project, proto, remove_component_from_go(_read_text(project, proto), str(component)), overwrite=True)
+                    return ok_envelope({"deleted": True, "id": go_id, "component": component, "undoable": False, "source": "disk"})
+                go_text = decode_data_field(block) or ""
+                new_block = replace_data_field(block, remove_component_from_go(go_text, str(component)))
+                _write_text(project, collection, replace_instance_block(text, str(go_id), new_block), overwrite=True)
+                return ok_envelope({"deleted": True, "id": go_id, "component": component, "undoable": False, "source": "disk"})
+            return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["remove", "set_property"])
+        if command == "script_manage" and params.get("op") == "detach":
+            return disk_command(project, "component_manage", {**params, "op": "remove"})
         if command == "gameobject_create":
             path = params.get("collection") or params.get("path")
             go_id = params.get("id") or "go"
@@ -444,26 +905,35 @@ DISK_COMMANDS = [
     "batch_execute",
     "camera_manage",
     "collection_get_hierarchy",
+    "collection_manage",
+    "collection_open",
+    "collection_save",
+    "component_add",
+    "component_manage",
+    "editor_state",
+    "filesystem_manage",
+    "font_manage",
+    "gameobject_create",
     "gameobject_get_properties",
+    "gameobject_manage",
     "gui_manage",
     "input_binding_manage",
     "material_manage",
     "particlefx_manage",
-    "project_doctor",
-    "render_manage",
-    "tilemap_manage",
-    "collection_manage",
-    "editor_state",
-    "filesystem_manage",
-    "gameobject_create",
     "project_build",
     "project_check",
+    "project_doctor",
     "project_manage",
+    "render_manage",
+    "script_attach",
     "script_create",
     "script_manage",
     "script_patch",
     "session_activate",
     "session_manage",
+    "sound_manage",
+    "tilemap_manage",
+    "tilesource_manage",
 ]
 
 
@@ -530,7 +1000,8 @@ def intercept_existing_http(
         from defold_agent import check_project, find_bob
 
         bob = find_bob(params.get("bob"), project)
-        payload = check_project(project, bob, prefer_editor=True, timeout=timeout)
+        with BuildingLock(project):
+            payload = check_project(project, bob, prefer_editor=True, timeout=timeout)
         data = {
             "success": bool(payload.get("success")),
             "launched": False,
@@ -552,19 +1023,24 @@ def intercept_existing_http(
 
         offset = max(int(params.get("offset") or 0), 0)
         limit = max(int(params.get("limit") or 200), 1)
-        got = editor_get(project, "/console", timeout)
+        wanted = str(params.get("source") or "all")
+        got = None if wanted == "engine" else editor_get(project, "/console", timeout)
         lines: List[str] = []
         source = "engine-log"
+        if wanted == "editor" and got is None:
+            return error_envelope("EDITOR_UNREACHABLE", "logs_read source=editor needs the open editor")
         if got is not None:
             status, body = got
             if status == 200 and isinstance(body, dict):
                 lines = [str(line) for line in (body.get("lines") or []) if line]
                 source = "console"
+            elif status != 200 and wanted == "editor":
+                return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
             elif status != 200 and not (project / ".internal" / "agent" / "engine.log").is_file():
                 return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
         if source != "console":
             lines = read_engine_log_lines(project, None)
-            if not lines and got is None:
+            if not lines and got is None and wanted != "engine":
                 return None
         total = len(lines)
         end = total - offset
@@ -686,7 +1162,10 @@ def dispatch_command(
     params: Optional[Dict[str, Any]],
     timeout: float,
 ) -> Dict[str, Any]:
-    params = params or {}
+    command, params = apply_alias(command, params or {})
+    blocked = reject_write_if_gated(project, command, params)
+    if blocked is not None:
+        return blocked
     if command == "batch_execute":
         return batch_execute_commands(project, params, timeout)
     if command == "session_activate" and params.get("url"):
@@ -725,4 +1204,5 @@ def dispatch_command(
         from agent_runtime import live_status
 
         result["data"]["engine"] = live_status(project)
-    return result
+        result["data"]["game_status"] = game_status_payload(project)
+    return overlay_readiness(project, result)
