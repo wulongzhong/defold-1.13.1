@@ -1915,6 +1915,12 @@
   (run [web-server]
     (ui/open-url (http-server/local-url web-server))))
 
+(defn- put-on-clipboard!
+  [s]
+  (doto (Clipboard/getSystemClipboard)
+    (.setContent (doto (ClipboardContent.)
+                   (.putString s)))))
+
 (handler/defhandler :help.copy-mcp-config :global
   (enabled? [workspace]
     workspace)
@@ -3097,12 +3103,6 @@
 
 (handler/defhandler :window.show-search-results :global
   (run [^Stage main-stage tool-tab-pane] (show-search-results! (.getScene main-stage) tool-tab-pane)))
-
-(defn- put-on-clipboard!
-  [s]
-  (doto (Clipboard/getSystemClipboard)
-    (.setContent (doto (ClipboardContent.)
-                   (.putString s)))))
 
 (handler/defhandler :edit.copy-resource-path :global
   (active? [app-view selection selection-context evaluation-context]
