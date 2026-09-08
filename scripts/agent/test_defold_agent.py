@@ -406,6 +406,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertIn("defold://editor/state", uris)
             self.assertIn("defold://project/info", uris)
             self.assertIn("defold://project/logs", uris)
+            self.assertIn("defold://project/mcp-config", uris)
             self.assertTrue(any(item.startswith("defold://collection/hierarchy") for item in uris))
             templates = handle_rpc({"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"}, project, 2)
             names = [item["name"] for item in templates["result"]["resourceTemplates"]]

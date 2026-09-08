@@ -114,7 +114,7 @@ python .../defold_agent.py mcp-config --format cursor
 python .../defold_agent.py mcp-config --write --project <dir>
 ```
 
-Sample Cursor config: `scripts/agent/examples/cursor.mcp.json`. Clients should use `command` + `args`, never `url = "http://..."`. Resources (`defold://editor/state`, `defold://collection/hierarchy?path=...`, `defold://runtime/snapshot/{id}`, …) and prompts (`defold-observe`, `defold-live`) are on the same stdio server.
+Sample Cursor config: `scripts/agent/examples/cursor.mcp.json`. Clients should use `command` + `args`, never `url = "http://..."`. Resources (`defold://editor/state`, `defold://collection/hierarchy?path=...`, `defold://project/mcp-config`, `defold://runtime/snapshot/{id}`, …) and prompts (`defold-observe`, `defold-live`, `defold-check`) are on the same stdio server.
 
 Aliases (`create_gameobject`, `create_script`, `patch_script`, `add_component`, `node_set_property`, …) resolve in both the CLI dispatcher and the editor.
 

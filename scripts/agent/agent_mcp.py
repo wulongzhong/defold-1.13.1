@@ -830,6 +830,12 @@ RESOURCE_TEMPLATES = [
         "mimeType": "application/json",
     },
     {
+        "uriTemplate": "defold://project/mcp-config",
+        "name": "mcp-config",
+        "description": "Cursor/Codex stdio command+args. Never an HTTP URL.",
+        "mimeType": "application/json",
+    },
+    {
         "uriTemplate": "defold://ref/{query}",
         "name": "api-ref",
         "description": "Lua/API reference search.",
@@ -956,6 +962,12 @@ def list_mcp_resources(project: Path) -> List[Dict[str, Any]]:
             "mimeType": "application/json",
             "description": "Console or engine.log tail.",
         },
+        {
+            "uri": "defold://project/mcp-config",
+            "name": "mcp-config",
+            "mimeType": "application/json",
+            "description": "stdio MCP client snippet. Never an HTTP URL.",
+        },
     ]
     for path in sorted(project.rglob("*.collection")):
         if any(part in {".internal", "build", ".git", ".editor"} for part in path.parts):
@@ -1043,6 +1055,8 @@ def read_mcp_resource(project: Path, uri: str, timeout: float) -> Dict[str, Any]
         return dispatch_command(project, "project_doctor", {}, timeout)
     if segments[:2] == ["project", "logs"] or uri.rstrip("/") == "defold://project/logs":
         return dispatch_command(project, "logs_read", {"limit": 80}, timeout)
+    if segments[:2] == ["project", "mcp-config"] or uri.rstrip("/") == "defold://project/mcp-config":
+        return dispatch_command(project, "editor_manage", {"op": "mcp_config"}, timeout)
     if segments[:1] == ["ref"]:
         q = query.get("q") or query.get("query") or "/".join(segments[1:])
         return dispatch_command(project, "api_manage", {"op": "get", "q": q}, timeout)
