@@ -65,6 +65,7 @@
 #include <gameobject/gameobject_ddf.h>
 #include <gameobject/res_lua.h>
 #include <gameobject/gameobject_script_util.h>
+#include <gameobject/gameobject_script.h>
 #include <hid/hid.h>
 #include <sound/sound.h>
 #include <render/render.h>
@@ -2900,6 +2901,88 @@ bail:
         }
     }
 
+    static bool AgentPushScriptOnInstance(lua_State* L, dmGameObject::HInstance inst, uint32_t script_type)
+    {
+        if (!inst)
+        {
+            return false;
+        }
+        for (uint16_t i = 0; i < 64; ++i)
+        {
+            dmhash_t cid;
+            if (dmGameObject::GetComponentId(inst, i, &cid) != dmGameObject::RESULT_OK)
+            {
+                break;
+            }
+            uint32_t type = 0;
+            dmGameObject::HComponent component = 0;
+            if (dmGameObject::GetComponent(inst, cid, &type, &component, 0) != dmGameObject::RESULT_OK || !component)
+            {
+                continue;
+            }
+            if (type != script_type)
+            {
+                continue;
+            }
+            dmGameObject::HScriptInstance script_instance = (dmGameObject::HScriptInstance)component;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, script_instance->m_InstanceReference);
+            if (lua_isnil(L, -1))
+            {
+                lua_pop(L, 1);
+                continue;
+            }
+            dmScript::SetInstance(L);
+            return true;
+        }
+        return false;
+    }
+
+    static bool AgentWalkBindScript(lua_State* L, dmGameObject::SceneNode* node, uint32_t script_type)
+    {
+        if (node->m_Type == dmGameObject::SCENE_NODE_TYPE_GAMEOBJECT &&
+            AgentPushScriptOnInstance(L, node->m_Instance, script_type))
+        {
+            return true;
+        }
+        dmGameObject::SceneNodeIterator it = dmGameObject::TraverseIterateChildren(node);
+        while (dmGameObject::TraverseIterateNext(&it))
+        {
+            if (AgentWalkBindScript(L, &it.m_Node, script_type))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool AgentBindScriptInstance(HEngine engine, lua_State* L)
+    {
+        if (!engine->m_MainCollection)
+        {
+            return false;
+        }
+        uint32_t script_type = dmGameObject::GetComponentTypeIndex(engine->m_MainCollection, dmHashString64("scriptc"));
+        if (script_type == 0xFFFFFFFF)
+        {
+            return false;
+        }
+        static const char* preferred[] = { "player", "cube", 0 };
+        for (int i = 0; preferred[i]; ++i)
+        {
+            dmGameObject::HInstance inst = dmGameObject::GetInstanceFromIdentifier(engine->m_MainCollection, dmHashString64(preferred[i]));
+            if (AgentPushScriptOnInstance(L, inst, script_type))
+            {
+                return true;
+            }
+        }
+        dmGameObject::SceneNode root;
+        if (!dmGameObject::TraverseGetRoot(engine->m_Register, &root))
+        {
+            return false;
+        }
+        return AgentWalkBindScript(L, &root, script_type);
+    }
+
     static void MaybeAgentControlEval(HEngine engine)
     {
         if (!engine->m_AgentControlDir[0])
@@ -2929,6 +3012,8 @@ bail:
             return;
         }
         int top = lua_gettop(L);
+        dmScript::GetInstance(L);
+        AgentBindScriptInstance(engine, L);
         g_AgentEvalTicks = 0;
         lua_sethook(L, AgentEvalHook, LUA_MASKCOUNT, 100);
         int load = luaL_loadbuffer(L, source, nread, "@agent_eval");
@@ -2948,7 +3033,7 @@ bail:
         else
         {
             ok = true;
-            int nres = lua_gettop(L) - top;
+            int nres = lua_gettop(L) - (top + 1);
             size_t used = 0;
             for (int i = 1; i <= nres && used + 1 < sizeof(result); ++i)
             {
@@ -2957,16 +3042,33 @@ bail:
                     result[used++] = '\t';
                     result[used] = 0;
                 }
-                const char* piece = lua_tostring(L, top + i);
+                const char* piece = lua_tostring(L, top + 1 + i);
                 if (!piece)
                 {
-                    piece = lua_typename(L, lua_type(L, top + i));
+                    lua_getglobal(L, "tostring");
+                    lua_pushvalue(L, top + 1 + i);
+                    if (lua_pcall(L, 1, 1, 0) == 0)
+                    {
+                        piece = lua_tostring(L, -1);
+                        dmStrlCpy(result + used, piece ? piece : "", sizeof(result) - used);
+                        used = strlen(result);
+                        lua_pop(L, 1);
+                    }
+                    else
+                    {
+                        lua_pop(L, 1);
+                        piece = lua_typename(L, lua_type(L, top + 1 + i));
+                        dmStrlCpy(result + used, piece ? piece : "", sizeof(result) - used);
+                        used = strlen(result);
+                    }
+                    continue;
                 }
                 dmStrlCpy(result + used, piece ? piece : "", sizeof(result) - used);
                 used = strlen(result);
             }
-            lua_settop(L, top);
         }
+        lua_settop(L, top + 1);
+        dmScript::SetInstance(L);
         lua_sethook(L, 0, 0, 0);
         AgentEnsureLineHook(engine);
         AgentWriteReady(engine->m_AgentControlDir, "eval", ok, result[0] ? result : "nil");
