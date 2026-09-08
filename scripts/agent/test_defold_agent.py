@@ -662,6 +662,40 @@ class ToolQualityTest(unittest.TestCase):
                 else:
                     os.environ["DEFOLD_AGENT_SESSIONS_DIR"] = previous
 
+    def test_runtime_intervention_gates(self):
+        import tempfile
+        from pathlib import Path
+
+        from agent_intervene import format_debug_request, format_input_request
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            missing = dispatch_command(project, "runtime_input", {"keys": ["left"]}, 1)
+            self.assertEqual("error", missing["status"])
+            self.assertEqual("ENGINE_NOT_RUNNING", missing["error"]["code"])
+            eval_off = dispatch_command(project, "game_eval", {"code": "return 1"}, 1)
+            self.assertEqual("error", eval_off["status"])
+            self.assertEqual("NOT_ALLOWED", eval_off["error"]["code"])
+            eval_live = dispatch_command(project, "game_eval", {"code": "return 1", "confirm": True}, 1)
+            self.assertEqual("ENGINE_NOT_RUNNING", eval_live["error"]["code"])
+            forbidden = dispatch_command(
+                project, "game_eval", {"code": "os.execute('dir')", "confirm": True}, 1
+            )
+            self.assertEqual("NOT_ALLOWED", forbidden["error"]["code"])
+            debug_missing = dispatch_command(project, "runtime_debug", {"op": "status"}, 1)
+            self.assertEqual("ENGINE_NOT_RUNNING", debug_missing["error"]["code"])
+            unknown = dispatch_command(project, "runtime_debug", {"op": "repl"}, 1)
+            self.assertEqual("UNKNOWN_OP", unknown["error"]["code"])
+            body, error = format_input_request({"keys": ["left", "space"], "hold": 4})
+            self.assertIsNone(error)
+            self.assertIn("key=left", body)
+            self.assertIn("hold=4", body)
+            _, bad_key = format_input_request({"keys": ["not-a-key"]})
+            self.assertEqual("INVALID_PARAM", bad_key["error"]["code"])
+            _, bp = format_debug_request({"op": "set_breakpoint"})
+            self.assertEqual("MISSING_PARAM", bp["error"]["code"])
+
     def test_project_doctor_lists_ready_flags(self):
         import tempfile
         from pathlib import Path

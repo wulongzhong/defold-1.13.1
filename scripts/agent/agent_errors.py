@@ -28,6 +28,7 @@ ERROR_CODES = {
     "SNAPSHOT_NOT_FOUND": "Snapshot id or path is not a project snapshot.",
     "INLINE_TOO_LARGE": "inline=full or get_path exceeded 48 KB.",
     "UNKNOWN_TARGET": "session_activate url is not in the discovered list.",
+    "AGENT_CONTROL_TIMEOUT": "Live engine did not answer a control-file request.",
 }
 
 COMMAND_ALIASES = {

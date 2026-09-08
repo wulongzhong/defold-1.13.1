@@ -484,7 +484,7 @@ defold://ref/{query}
 
 `material_manage`、`particlefx_manage`、`atlas_manage`、`tilemap_manage`、`input_binding_manage`、`render_manage`、`camera_manage`、preset 库、`custom_manage`（给别的 editor script 挂工具）。
 
-运行时灌输入 / `game_eval`：**不做**，除非引擎先提供对等 Godot debugger wire 的通道。1.13.1 没有。Play 用 `project_build` + `/console` + `/preview`。
+运行时灌输入 / `game_eval` / 非交互 debugger：走 `--agent-control` 的 `input.request` / `eval.request` / `debug.request`。不 curl `/eval`，不停 `debug>`。`game_eval` 需 `confirm=true`。
 
 ---
 
@@ -644,12 +644,19 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 - 磁盘回退：`collection_manage` / `gameobject_manage` / `component_add` / `script_attach`；stdio `--exclude-domains`
 - 不做 HTTP MCP；不做 custom tool 注册 / 签名更新
 
+### P3 — 干预 ✅（需求 R3）
+
+- `runtime_input` / `game_eval` / `runtime_debug` 走 `--agent-control` 文件（`input.request` / `eval.request` / `debug.request`）
+- `game_eval` 默认关（`confirm=true` 或 `DEFOLD_AGENT_GAME_EVAL=1`），源码预算 + 禁 os/io/socket
+- `runtime_debug` 可 pause/step/breakpoint，回包 `prompt: false`，主环不停 `debug>`
+- 不注册编辑器 `POST /eval` 或 mobdebug TCP 为 tool
+
 ### 明确不做（直到引擎有能力）
 
 - 给 Codex 配 HTTP URL。
 - 让 Agent 直接 curl `/eval` 当主协议。
 - 在插件里实现完整 MCP JSON-RPC（那是 Python 的事）。vlaaad gist 那种「editor script 自己当 MCP」只作参考，不作主方案。
-- 运行时 `game_eval`、按帧灌输入、debugger 截游戏帧。用 `/preview` + `/console` 代替。
+- 把编辑器 `POST /eval` 或 mobdebug 交互提示当 Agent 主协议。干预用控制文件：`runtime_input` / `game_eval` / `runtime_debug`。
 - 把 WebSocket 塞进引擎，除非 P0/P1 证明确实被 HTTP 往返拖死。
 
 ---
@@ -666,7 +673,7 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 | `POST /command/hot-reload` | `project_manage op=hot_reload`（只要编辑器开着） |
 | `GET /ref?q=` | `api_manage` |
 | `GET /preview/{path}` | `editor_preview` |
-| `POST /eval` | **默认关掉。** 仅内部排障，不注册成 MCP tool |
+| `POST /eval` | 编辑器扩展运行时。不注册成 MCP tool。运行时 Lua 用 `game_eval` 控制文件 |
 | `.internal/editor.port` / `editor.token` | 发现与鉴权 |
 
 `POST /agent/command` 是编辑器源码里的命令面，对应 Godot 插件那条 WS command。不要把每个 op 再暴露成一条 REST，也不要在游戏工程里加插件路由。

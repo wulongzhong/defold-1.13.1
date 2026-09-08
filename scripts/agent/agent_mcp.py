@@ -27,7 +27,8 @@ INSTRUCTIONS = (
     "Observe with runtime_observe then runtime_snapshot_query. "
     "Diagnose with diagnostics_read and logs_read (severity/domain/q). "
     "Compare authoring vs runtime with runtime_snapshot_query op=compare_authoring. "
-    "Do not read snapshot JSON via filesystem_manage. "
+    "Live intervention: runtime_input, optional game_eval (confirm=true), runtime_debug pause/step. "
+    "Do not curl /eval. Do not sit at debug>. Do not read snapshot JSON via filesystem_manage. "
     "Do not configure an HTTP MCP URL."
 )
 
@@ -90,6 +91,9 @@ TOOLS = [
     ("texture_profiles_manage", "Create/get/list texture profile files."),
     ("compute_manage", "Create/get/list compute shader program files."),
     ("appmanifest_manage", "Create/get/list app manifest files."),
+    ("runtime_input", "Inject keyboard/mouse into the live engine via control files. Needs project_run mode=live."),
+    ("game_eval", "Run a short Lua chunk in the live engine. Off until confirm=true. Do not curl /eval."),
+    ("runtime_debug", "Pause/step/breakpoint via control files. Never sits at debug>. op: status|pause|continue|step|set_breakpoint|clear_breakpoint."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
@@ -223,6 +227,54 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "type": "object",
         "additionalProperties": False,
         "properties": {"dest": {"type": "string", "description": "PNG path. Default latest.png in the snapshot dir."}},
+    },
+    "runtime_input": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "keys": {
+                "type": "array",
+                "items": {"type": ["string", "object"]},
+                "description": "Key names such as left, space, a. Optional {key, mode: down|tap|up}.",
+            },
+            "key": {"type": "string"},
+            "mouse_buttons": {"type": "array", "items": {"type": ["string", "object"]}},
+            "mouse_button": {"type": "string"},
+            "mouse": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+            "x": {"type": "number"},
+            "y": {"type": "number"},
+            "wheel": {"type": "number"},
+            "text": {"type": "string"},
+            "hold": {"type": "integer", "default": 1, "description": "Frames to hold downs. Max 30."},
+            "frames": {"type": "integer", "description": "Alias of hold."},
+        },
+    },
+    "game_eval": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["code"],
+        "properties": {
+            "code": {"type": "string", "description": "Short Lua chunk. Max 4096 bytes. No os/io/socket."},
+            "source": {"type": "string"},
+            "lua": {"type": "string"},
+            "confirm": {
+                "type": "boolean",
+                "description": "Required unless DEFOLD_AGENT_GAME_EVAL=1. Same class as /eval.",
+            },
+        },
+    },
+    "runtime_debug": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "op": {
+                "type": "string",
+                "enum": ["status", "stack", "pause", "continue", "step", "set_breakpoint", "clear_breakpoint"],
+                "default": "status",
+            },
+            "file": {"type": "string", "description": "Script path for breakpoints, e.g. /main/player.script."},
+            "line": {"type": "integer"},
+        },
     },
     "atlas_manage": {
         "type": "object",
@@ -1204,7 +1256,8 @@ def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             f"Call diagnostics_read. If a snapshot exists, runtime_snapshot_query "
             f"op=compare_authoring id={go_id} collection={collection}. "
             "Use logs_read source=all severity=error for stacks and DEBUG:SCRIPT prints. "
-            "Do not start the debugger. Do not screenshot unless the user asks how it looks."
+            "If the game is live, runtime_debug op=status is allowed; do not sit at debug>. "
+            "Do not screenshot unless the user asks how it looks."
         ),
     }
     if name not in texts:

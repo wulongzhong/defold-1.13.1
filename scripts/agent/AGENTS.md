@@ -164,7 +164,20 @@ Bob:
 ERROR:BUILD: /main/player.script:12: unexpected symbol near 'endd'
 ```
 
-Do not use the interactive debugger (break / step / `debug>`). Do not `game_eval` or inject input. Do not curl the editor as your main protocol; let `defold_agent.py` do that.
+Live intervention (needs `project_run mode=live` and a dmengine built with `--agent-control`):
+
+```bash
+python .../defold_agent.py input --key left --hold 8
+python .../defold_agent.py eval --code "return go.get_position('/cube')" --confirm
+python .../defold_agent.py debug --op pause
+python .../defold_agent.py debug --op step
+python .../defold_agent.py debug --op set_breakpoint --file /main/player.script --line 12
+python .../defold_agent.py debug --op continue
+```
+
+`runtime_input` writes `input.request` (keyboard / mouse). `game_eval` is off until `confirm=true` or `DEFOLD_AGENT_GAME_EVAL=1`; it is the same class as `/eval` — do not curl `/eval`. `runtime_debug` pause/step/breakpoints never sit at `debug>`.
+
+Do not curl the editor as your main protocol; let `defold_agent.py` do that.
 
 ## Suggested iteration
 
@@ -174,4 +187,5 @@ Do not use the interactive debugger (break / step / `debug>`). Do not `game_eval
 4. `observe --frames 30` — remember `data.snapshot.id`.
 5. `snapshot-query --op get_node --id <go>` (and `find` if needed).
 6. `diagnostics` if something failed; `compare_authoring` if a GO is not where the collection says.
-7. Change one thing. Repeat.
+7. If it is live and you need to press a key or pause a frame: `input` / `debug`. `eval --confirm` only when a read-only Lua check is the point.
+8. Change one thing. Repeat.

@@ -1,6 +1,6 @@
 # Defold AI MCP 需求文档
 
-状态: **R0–R2 已按本文落地**（stdio MCP + 落盘观察；R3 干预仍默认不做）
+状态: **R0–R3 已按本文落地**（stdio MCP + 落盘观察 + 文件握手干预）
 适用: 本仓库 Defold **1.13.1**
 读者: 实现 Agent CLI / 编辑器 `/agent` / 引擎观察通道的人；以及用 Codex / Cursor 写游戏的人
 关系: [`AI_MCP.md`](AI_MCP.md) 记录已落地的路径 A/B 和历史对照。**以后以本文为产品需求**；实现细节仍回写 `AI_MCP.md`。
@@ -85,7 +85,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | L2 | 编译诊断 | `check` / bob diagnostics / `ERROR:BUILD` / `diagnostics_read` / 更完整的 `logs_read`（severity/domain/prints/stack） | 继续统一 issues 信封 |
 | L3 | 运行与生命周期 | `project_run` batch/live + `project_stop`；CLI 管一个 live dmengine | 保持每工程一个 CLI 进程 |
 | L4 | **运行时观察** | 快照文件 + `runtime_snapshot_query`；live 走 `--agent-control` 握手 | 完整树只落盘；MCP 默认摘要 |
-| L5 | 运行时干预 | 明确未做 | 不进完成定义 |
+| L5 | 运行时干预 | `runtime_input` / `game_eval`(confirm) / `runtime_debug` 走 `--agent-control` | 不 curl `/eval`；不在 `debug>` 停主环 |
 | L6 | 领域资源 | atlas / tilemap（含 `set_tile`）/ tilesource / font / sound / gamepads / display_profiles / model / factory / collectionproxy / collisionobject / gui（含 `set_node`）/ input / particlefx / material / camera / render | 编辑器关着走磁盘；`undoable: false` |
 
 `AI_MCP.md` 把「运行时灌输入 / `game_eval` / debugger 截帧」整包标成不做。那是 L5。L4 **不是**同一件事。引擎里已经有只读观察通道，见 §7。
@@ -105,7 +105,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | 运行时报错 | `logs_read source=all` + `diagnostics_read` | 无日志时回空行，不装失败 |
 | 目标还在跑吗 | `runtime_state` / `editor_state.engine` | CLI live 优先 |
 
-结论：R0–R2 已按本文落地（含编辑器开着时的整笔 batch undo、以及 `session_manage` 列出本工程编辑器 / live / 其它已开编辑器）。明确不做的只剩 R3。
+结论：R0–R3 已按本文落地。干预走 `--agent-control` 文件（`input` / `eval` / `debug`），不是 HTTP MCP，也不是交互式 `debug>`。
 
 ---
 
@@ -123,7 +123,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | `GET /scene_graph` | **整棵运行时树的 JSON**：id / type / resource、local+world 变换、组件、`go.property` 当前值、children | **运行时快照的主数据** |
 | `GET /gameobjects_data` | 分析器用的二进制 | 不作为 MCP 主合同 |
 | `GET /screenshot` | **R1 新增**：当前帧 `image/png` | **可选**视觉能力。不走 `POST /post`。observe 默认不调 |
-| `POST /post/{socket}/{ddf}` | 给运行中的引擎发 DDF | **L5 / R3 才考虑**。观察层不用 |
+| `POST /post/{socket}/{ddf}` | 给运行中的引擎发 DDF | 观察层不用。R3 干预走 `--agent-control`，不把 DDF HTTP 当 Agent 协议 |
 
 `TraverseIterateProperties` 已经能吐：
 
@@ -426,15 +426,13 @@ CLI 拉起的 live 进程由 CLI 管死：`project_stop`、进程退出、工程
 - atlas / tilemap / gui / input 的 manage。
 - 多 target 列表（仍默认一个当前）。
 
-### R3 — 干预（默认不做，单独立项）
+### R3 — 干预（已开启）
 
-只有 L4 稳定、且有明确游戏用例再开：
+走 `--agent-control` 文件握手，不把 `/eval` 或 mobdebug TCP 当 Agent 协议：
 
-- 按帧灌输入（合成 HID 或 DDF，需安全预算）。
-- `game_eval`（默认关，与 `/eval` 同级）。
-- 交互式 debugger（mobdebug）。Agent 主环仍然禁止停在 `debug>`。
-
-R3 不进「完整 MCP」的完成定义。完整 = R1 验收通过。
+- `runtime_input`：键盘 / 鼠标，最多 16 事件、按住最多 30 帧。
+- `game_eval`：默认关，需 `confirm=true` 或 `DEFOLD_AGENT_GAME_EVAL=1`；源码 ≤ 4 KB，禁 os/io/socket，有指令预算。
+- `runtime_debug`：`status` / `pause` / `continue` / `step` / `set_breakpoint` / `clear_breakpoint`。回包 `prompt: false`。禁止停在 `debug>`。
 
 ---
 
@@ -442,7 +440,7 @@ R3 不进「完整 MCP」的完成定义。完整 = R1 验收通过。
 
 - 游戏工程里的观察 helper、autoload、TCP 后门。
 - 引擎内实现 MCP 协议。
-- 把 `/eval` 或 mobdebug 注册成默认 tool。
+- 把编辑器 `POST /eval` 或 mobdebug TCP 注册成默认 tool（`game_eval` / `runtime_debug` 走控制文件，且 eval 默认关）。
 - 客户端配置裸 HTTP MCP URL。
 - 用桌面截窗口代替引擎截屏（分辨率/焦点不稳定）。
 - 把 WebSocket 塞进引擎，除非测出 loopback HTTP 是瓶颈。
@@ -479,7 +477,7 @@ R3 不进「完整 MCP」的完成定义。完整 = R1 验收通过。
 | release 引擎没有 service | 观察只保证 debug / 开发引擎；doctor 要说清楚 |
 | 编辑器 Play 与 CLI 各拉一个引擎 | `runtime_state` 列出；默认本 CLI 拉起的；不要静默打错进程 |
 | 把截屏写成默认循环 | AGENTS.md 写死：主环是 observe + query。有 PNG 再打开；没有就不要截 |
-| 把 L5 提前做 | 不灌输入、不 eval，直到 R1 验收过 |
+| 把 L5 做成 HTTP `/eval` | 干预只走 `--agent-control`；`game_eval` 默认关 |
 
 ---
 

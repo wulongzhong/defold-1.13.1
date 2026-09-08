@@ -1605,6 +1605,9 @@ BATCH_KEEP_LOCAL = {
     "runtime_screenshot",
     "runtime_snapshot_query",
     "runtime_state",
+    "runtime_input",
+    "game_eval",
+    "runtime_debug",
 }
 
 
@@ -1976,6 +1979,9 @@ RUNTIME_COMMANDS = {
     "project_stop",
     "project_doctor",
     "doctor",
+    "runtime_input",
+    "game_eval",
+    "runtime_debug",
 }
 
 
@@ -2010,6 +2016,18 @@ def handle_runtime_command(
         return runtime_get_hierarchy(project, params)
     if command == "runtime_get_properties":
         return runtime_get_properties(project, params)
+    if command == "runtime_input":
+        from agent_intervene import runtime_input
+
+        return runtime_input(project, params)
+    if command == "game_eval":
+        from agent_intervene import game_eval
+
+        return game_eval(project, params)
+    if command == "runtime_debug":
+        from agent_intervene import runtime_debug
+
+        return runtime_debug(project, params)
     if command == "runtime_observe":
         from defold_agent import observe_runtime
 

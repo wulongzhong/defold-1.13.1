@@ -26,6 +26,8 @@
 #include <dmsdk/render/render.h>
 #include <dmsdk/resource/resource.h>
 #include <dmsdk/script/script.h>
+#include <lua/lua.h>
+#include <lua/lauxlib.h>
 
 #include <sys/stat.h>
 
@@ -2436,6 +2438,762 @@ bail:
         }
     }
 
+    static const uint32_t AGENT_MAX_HOLDS = 16;
+    static const uint32_t AGENT_MAX_HOLD_FRAMES = 30;
+    static const uint32_t AGENT_MAX_BREAKPOINTS = 16;
+    static const uint32_t AGENT_MAX_EVAL_BYTES = 4096;
+    static const int AGENT_EVAL_HOOK_COUNT = 20000;
+
+    struct AgentKeyHold
+    {
+        dmHID::Key m_Key;
+        uint32_t m_Frames;
+        bool m_Used;
+    };
+
+    struct AgentMouseHold
+    {
+        dmHID::MouseButton m_Button;
+        uint32_t m_Frames;
+        bool m_Used;
+    };
+
+    struct AgentBreakpoint
+    {
+        char m_File[256];
+        int m_Line;
+        bool m_Used;
+    };
+
+    static AgentKeyHold g_AgentKeys[AGENT_MAX_HOLDS];
+    static AgentMouseHold g_AgentMouseButtons[AGENT_MAX_HOLDS];
+    static AgentBreakpoint g_AgentBreakpoints[AGENT_MAX_BREAKPOINTS];
+    static bool g_AgentPaused = false;
+    static bool g_AgentStepThisFrame = false;
+    static bool g_AgentPauseAfterSim = false;
+    static bool g_AgentHasMouse = false;
+    static int32_t g_AgentMouseX = 0;
+    static int32_t g_AgentMouseY = 0;
+    static int32_t g_AgentMouseWheel = 0;
+    static bool g_AgentHasWheel = false;
+    static char g_AgentText[64];
+    static int g_AgentEvalTicks = 0;
+    static char g_AgentLastBreakFile[256];
+    static int g_AgentLastBreakLine = 0;
+    static bool g_AgentHookInstalled = false;
+
+    static void AgentEnsureLineHook(HEngine engine);
+
+    static lua_State* AgentLuaState(HEngine engine)
+    {
+        dmScript::HContext ctx = engine->m_SharedScriptContext ? engine->m_SharedScriptContext : engine->m_GOScriptContext;
+        return ctx ? dmScript::GetLuaState(ctx) : 0x0;
+    }
+
+    static void AgentWriteReady(const char* dir, const char* kind, bool ok, const char* extra)
+    {
+        char ready_path[1024];
+        dmSnPrintf(ready_path, sizeof(ready_path), "%s/%s.ready", dir, kind);
+        FILE* ready = fopen(ready_path, "wb");
+        if (!ready)
+        {
+            return;
+        }
+        fputs(ok ? "OK\n" : "ERROR\n", ready);
+        if (extra && extra[0])
+        {
+            fputs(extra, ready);
+            size_t n = strlen(extra);
+            if (n == 0 || extra[n - 1] != '\n')
+            {
+                fputc('\n', ready);
+            }
+        }
+        fclose(ready);
+    }
+
+    static bool AgentReadRequest(const char* dir, const char* kind, char* dest, size_t dest_size, size_t* out_len)
+    {
+        char request_path[1024];
+        dmSnPrintf(request_path, sizeof(request_path), "%s/%s.request", dir, kind);
+        FILE* request = fopen(request_path, "rb");
+        if (!request)
+        {
+            return false;
+        }
+        size_t nread = fread(dest, 1, dest_size - 1, request);
+        fclose(request);
+        dest[nread] = 0;
+        remove(request_path);
+        if (out_len)
+        {
+            *out_len = nread;
+        }
+        return true;
+    }
+
+    static void AgentLower(char* s)
+    {
+        for (; *s; ++s)
+        {
+            if (*s >= 'A' && *s <= 'Z')
+            {
+                *s = (char)(*s - 'A' + 'a');
+            }
+        }
+    }
+
+    static bool AgentParseKey(const char* raw, dmHID::Key* out)
+    {
+        char name[64];
+        dmStrlCpy(name, raw, sizeof(name));
+        AgentLower(name);
+        const char* s = name;
+        if (strncmp(s, "key_", 4) == 0)
+        {
+            s += 4;
+        }
+        if (s[0] && s[1] == 0)
+        {
+            if (s[0] >= 'a' && s[0] <= 'z')
+            {
+                *out = (dmHID::Key)(dmHID::KEY_A + (s[0] - 'a'));
+                return true;
+            }
+            if (s[0] >= '0' && s[0] <= '9')
+            {
+                *out = (dmHID::Key)(dmHID::KEY_0 + (s[0] - '0'));
+                return true;
+            }
+        }
+        struct NamedKey { const char* name; dmHID::Key key; };
+        static const NamedKey keys[] = {
+            {"space", dmHID::KEY_SPACE},
+            {"left", dmHID::KEY_LEFT},
+            {"right", dmHID::KEY_RIGHT},
+            {"up", dmHID::KEY_UP},
+            {"down", dmHID::KEY_DOWN},
+            {"enter", dmHID::KEY_ENTER},
+            {"return", dmHID::KEY_ENTER},
+            {"esc", dmHID::KEY_ESC},
+            {"escape", dmHID::KEY_ESC},
+            {"tab", dmHID::KEY_TAB},
+            {"backspace", dmHID::KEY_BACKSPACE},
+            {"lshift", dmHID::KEY_LSHIFT},
+            {"rshift", dmHID::KEY_RSHIFT},
+            {"shift", dmHID::KEY_LSHIFT},
+            {"lctrl", dmHID::KEY_LCTRL},
+            {"rctrl", dmHID::KEY_RCTRL},
+            {"ctrl", dmHID::KEY_LCTRL},
+            {"lalt", dmHID::KEY_LALT},
+            {"ralt", dmHID::KEY_RALT},
+            {"alt", dmHID::KEY_LALT},
+            {0, dmHID::KEY_SPACE}
+        };
+        for (uint32_t i = 0; keys[i].name; ++i)
+        {
+            if (strcmp(s, keys[i].name) == 0)
+            {
+                *out = keys[i].key;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static bool AgentParseMouseButton(const char* raw, dmHID::MouseButton* out)
+    {
+        char name[32];
+        dmStrlCpy(name, raw, sizeof(name));
+        AgentLower(name);
+        if (strcmp(name, "left") == 0 || strcmp(name, "mouse_left") == 0)
+        {
+            *out = dmHID::MOUSE_BUTTON_LEFT;
+            return true;
+        }
+        if (strcmp(name, "right") == 0 || strcmp(name, "mouse_right") == 0)
+        {
+            *out = dmHID::MOUSE_BUTTON_RIGHT;
+            return true;
+        }
+        if (strcmp(name, "middle") == 0 || strcmp(name, "mouse_middle") == 0)
+        {
+            *out = dmHID::MOUSE_BUTTON_MIDDLE;
+            return true;
+        }
+        return false;
+    }
+
+    static void AgentAddKeyHold(dmHID::Key key, uint32_t frames)
+    {
+        for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
+        {
+            if (g_AgentKeys[i].m_Used && g_AgentKeys[i].m_Key == key)
+            {
+                g_AgentKeys[i].m_Frames = frames;
+                return;
+            }
+        }
+        for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
+        {
+            if (!g_AgentKeys[i].m_Used)
+            {
+                g_AgentKeys[i].m_Key = key;
+                g_AgentKeys[i].m_Frames = frames;
+                g_AgentKeys[i].m_Used = true;
+                return;
+            }
+        }
+    }
+
+    static void AgentAddMouseHold(dmHID::MouseButton button, uint32_t frames)
+    {
+        for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
+        {
+            if (g_AgentMouseButtons[i].m_Used && g_AgentMouseButtons[i].m_Button == button)
+            {
+                g_AgentMouseButtons[i].m_Frames = frames;
+                return;
+            }
+        }
+        for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
+        {
+            if (!g_AgentMouseButtons[i].m_Used)
+            {
+                g_AgentMouseButtons[i].m_Button = button;
+                g_AgentMouseButtons[i].m_Frames = frames;
+                g_AgentMouseButtons[i].m_Used = true;
+                return;
+            }
+        }
+    }
+
+    static void ApplyAgentInputHolds(HEngine engine)
+    {
+        if (!engine->m_HidContext)
+        {
+            return;
+        }
+        dmHID::HKeyboard keyboard = dmHID::GetKeyboard(engine->m_HidContext, 0);
+        dmHID::HMouse mouse = dmHID::GetMouse(engine->m_HidContext, 0);
+        for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
+        {
+            if (g_AgentKeys[i].m_Used && g_AgentKeys[i].m_Frames > 0)
+            {
+                dmHID::SetKey(keyboard, g_AgentKeys[i].m_Key, true);
+                g_AgentKeys[i].m_Frames--;
+                if (g_AgentKeys[i].m_Frames == 0)
+                {
+                    g_AgentKeys[i].m_Used = false;
+                }
+            }
+        }
+        for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
+        {
+            if (g_AgentMouseButtons[i].m_Used && g_AgentMouseButtons[i].m_Frames > 0)
+            {
+                dmHID::SetMouseButton(mouse, g_AgentMouseButtons[i].m_Button, true);
+                g_AgentMouseButtons[i].m_Frames--;
+                if (g_AgentMouseButtons[i].m_Frames == 0)
+                {
+                    g_AgentMouseButtons[i].m_Used = false;
+                }
+            }
+        }
+        if (g_AgentHasMouse)
+        {
+            dmHID::SetMousePosition(mouse, g_AgentMouseX, g_AgentMouseY);
+        }
+        if (g_AgentHasWheel)
+        {
+            dmHID::SetMouseWheel(mouse, g_AgentMouseWheel);
+            g_AgentHasWheel = false;
+        }
+        if (g_AgentText[0])
+        {
+            for (const char* p = g_AgentText; *p; ++p)
+            {
+                dmHID::AddKeyboardChar(engine->m_HidContext, (int)(unsigned char)*p);
+            }
+            g_AgentText[0] = 0;
+        }
+    }
+
+    static bool MaybeAgentControlInput(HEngine engine)
+    {
+        if (!engine->m_AgentControlDir[0])
+        {
+            return false;
+        }
+        char body[2048];
+        if (!AgentReadRequest(engine->m_AgentControlDir, "input", body, sizeof(body), 0x0))
+        {
+            return false;
+        }
+        uint32_t hold = 1;
+        uint32_t applied = 0;
+        char extra[256];
+        extra[0] = 0;
+        char* cursor = body;
+        while (cursor && *cursor)
+        {
+            char* line = cursor;
+            char* nl = strchr(cursor, '\n');
+            if (nl)
+            {
+                *nl = 0;
+                cursor = nl + 1;
+            }
+            else
+            {
+                cursor = 0;
+            }
+            TrimControlLine(line);
+            if (!line[0] || line[0] == '#')
+            {
+                continue;
+            }
+            if (strncmp(line, "hold=", 5) == 0)
+            {
+                int value = atoi(line + 5);
+                if (value < 1) value = 1;
+                if ((uint32_t)value > AGENT_MAX_HOLD_FRAMES) value = (int)AGENT_MAX_HOLD_FRAMES;
+                hold = (uint32_t)value;
+                continue;
+            }
+            if (applied >= AGENT_MAX_HOLDS)
+            {
+                AgentWriteReady(engine->m_AgentControlDir, "input", false, "input budget exceeded (max 16 events)");
+                return false;
+            }
+            if (strncmp(line, "key=", 4) == 0)
+            {
+                char token[64];
+                dmStrlCpy(token, line + 4, sizeof(token));
+                char* mode = strchr(token, ':');
+                uint32_t frames = hold;
+                if (mode)
+                {
+                    *mode = 0;
+                    ++mode;
+                    if (strcmp(mode, "up") == 0)
+                    {
+                        frames = 0;
+                    }
+                    else if (strcmp(mode, "tap") == 0)
+                    {
+                        frames = 1;
+                    }
+                }
+                dmHID::Key key;
+                if (!AgentParseKey(token, &key))
+                {
+                    AgentWriteReady(engine->m_AgentControlDir, "input", false, "unknown key");
+                    return false;
+                }
+                if (frames == 0)
+                {
+                    dmHID::SetKey(dmHID::GetKeyboard(engine->m_HidContext, 0), key, false);
+                }
+                else
+                {
+                    AgentAddKeyHold(key, frames);
+                }
+                applied++;
+                continue;
+            }
+            if (strncmp(line, "mouse_button=", 13) == 0)
+            {
+                char token[64];
+                dmStrlCpy(token, line + 13, sizeof(token));
+                char* mode = strchr(token, ':');
+                uint32_t frames = hold;
+                if (mode)
+                {
+                    *mode = 0;
+                    ++mode;
+                    if (strcmp(mode, "up") == 0) frames = 0;
+                    else if (strcmp(mode, "tap") == 0) frames = 1;
+                }
+                dmHID::MouseButton button;
+                if (!AgentParseMouseButton(token, &button))
+                {
+                    AgentWriteReady(engine->m_AgentControlDir, "input", false, "unknown mouse button");
+                    return false;
+                }
+                if (frames == 0)
+                {
+                    dmHID::SetMouseButton(dmHID::GetMouse(engine->m_HidContext, 0), button, false);
+                }
+                else
+                {
+                    AgentAddMouseHold(button, frames);
+                }
+                applied++;
+                continue;
+            }
+            if (strncmp(line, "mouse=", 6) == 0)
+            {
+                int x = 0;
+                int y = 0;
+                if (sscanf(line + 6, "%d,%d", &x, &y) != 2)
+                {
+                    AgentWriteReady(engine->m_AgentControlDir, "input", false, "mouse needs x,y");
+                    return false;
+                }
+                g_AgentMouseX = x;
+                g_AgentMouseY = y;
+                g_AgentHasMouse = true;
+                applied++;
+                continue;
+            }
+            if (strncmp(line, "wheel=", 6) == 0)
+            {
+                g_AgentMouseWheel = atoi(line + 6);
+                g_AgentHasWheel = true;
+                applied++;
+                continue;
+            }
+            if (strncmp(line, "text=", 5) == 0)
+            {
+                dmStrlCpy(g_AgentText, line + 5, sizeof(g_AgentText));
+                applied++;
+                continue;
+            }
+            AgentWriteReady(engine->m_AgentControlDir, "input", false, "unknown input line");
+            return false;
+        }
+        dmSnPrintf(extra, sizeof(extra), "applied=%u\nhold=%u\n", applied, hold);
+        AgentWriteReady(engine->m_AgentControlDir, "input", true, extra);
+        return applied > 0;
+    }
+
+    static bool AgentEvalForbidden(const char* source)
+    {
+        static const char* banned[] = {
+            "os.execute", "io.popen", "io.open", "loadfile", "dofile",
+            "package.loadlib", "debug.debug", "socket.bind", "socket.connect",
+            0
+        };
+        for (uint32_t i = 0; banned[i]; ++i)
+        {
+            if (strstr(source, banned[i]))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static void AgentEvalHook(lua_State* L, lua_Debug*)
+    {
+        if (++g_AgentEvalTicks > AGENT_EVAL_HOOK_COUNT)
+        {
+            luaL_error(L, "game_eval instruction budget exceeded");
+        }
+    }
+
+    static void MaybeAgentControlEval(HEngine engine)
+    {
+        if (!engine->m_AgentControlDir[0])
+        {
+            return;
+        }
+        char source[AGENT_MAX_EVAL_BYTES + 8];
+        size_t nread = 0;
+        if (!AgentReadRequest(engine->m_AgentControlDir, "eval", source, sizeof(source), &nread))
+        {
+            return;
+        }
+        if (nread > AGENT_MAX_EVAL_BYTES)
+        {
+            AgentWriteReady(engine->m_AgentControlDir, "eval", false, "eval source exceeds 4096 bytes");
+            return;
+        }
+        if (AgentEvalForbidden(source))
+        {
+            AgentWriteReady(engine->m_AgentControlDir, "eval", false, "eval source uses a forbidden API");
+            return;
+        }
+        lua_State* L = AgentLuaState(engine);
+        if (!L)
+        {
+            AgentWriteReady(engine->m_AgentControlDir, "eval", false, "no Lua state");
+            return;
+        }
+        int top = lua_gettop(L);
+        g_AgentEvalTicks = 0;
+        lua_sethook(L, AgentEvalHook, LUA_MASKCOUNT, 100);
+        int load = luaL_loadbuffer(L, source, nread, "@agent_eval");
+        char result[2048];
+        result[0] = 0;
+        bool ok = false;
+        if (load != 0)
+        {
+            dmStrlCpy(result, lua_tostring(L, -1) ? lua_tostring(L, -1) : "load error", sizeof(result));
+            lua_pop(L, 1);
+        }
+        else if (lua_pcall(L, 0, LUA_MULTRET, 0) != 0)
+        {
+            dmStrlCpy(result, lua_tostring(L, -1) ? lua_tostring(L, -1) : "eval error", sizeof(result));
+            lua_pop(L, 1);
+        }
+        else
+        {
+            ok = true;
+            int nres = lua_gettop(L) - top;
+            size_t used = 0;
+            for (int i = 1; i <= nres && used + 1 < sizeof(result); ++i)
+            {
+                if (i > 1)
+                {
+                    result[used++] = '\t';
+                    result[used] = 0;
+                }
+                const char* piece = lua_tostring(L, top + i);
+                if (!piece)
+                {
+                    piece = lua_typename(L, lua_type(L, top + i));
+                }
+                dmStrlCpy(result + used, piece ? piece : "", sizeof(result) - used);
+                used = strlen(result);
+            }
+            lua_settop(L, top);
+        }
+        lua_sethook(L, 0, 0, 0);
+        AgentEnsureLineHook(engine);
+        AgentWriteReady(engine->m_AgentControlDir, "eval", ok, result[0] ? result : "nil");
+    }
+
+    static bool AgentFileMatch(const char* source, const char* wanted)
+    {
+        if (!source || !wanted || !wanted[0])
+        {
+            return false;
+        }
+        if (source[0] == '@' || source[0] == '=')
+        {
+            ++source;
+        }
+        if (strcmp(source, wanted) == 0)
+        {
+            return true;
+        }
+        size_t slen = strlen(source);
+        size_t wlen = strlen(wanted);
+        return slen >= wlen && strcmp(source + slen - wlen, wanted) == 0;
+    }
+
+    static void AgentLineHook(lua_State* L, lua_Debug* ar)
+    {
+        if (ar->event != LUA_HOOKLINE)
+        {
+            return;
+        }
+        lua_getinfo(L, "Sl", ar);
+        for (uint32_t i = 0; i < AGENT_MAX_BREAKPOINTS; ++i)
+        {
+            if (g_AgentBreakpoints[i].m_Used &&
+                g_AgentBreakpoints[i].m_Line == ar->currentline &&
+                AgentFileMatch(ar->source, g_AgentBreakpoints[i].m_File))
+            {
+                g_AgentPaused = true;
+                dmStrlCpy(g_AgentLastBreakFile, g_AgentBreakpoints[i].m_File, sizeof(g_AgentLastBreakFile));
+                g_AgentLastBreakLine = ar->currentline;
+                return;
+            }
+        }
+    }
+
+    static void AgentEnsureLineHook(HEngine engine)
+    {
+        lua_State* L = AgentLuaState(engine);
+        if (!L)
+        {
+            return;
+        }
+        bool any = false;
+        for (uint32_t i = 0; i < AGENT_MAX_BREAKPOINTS; ++i)
+        {
+            if (g_AgentBreakpoints[i].m_Used)
+            {
+                any = true;
+                break;
+            }
+        }
+        g_AgentHookInstalled = any;
+        if (any)
+        {
+            lua_sethook(L, AgentLineHook, LUA_MASKLINE, 0);
+        }
+        else
+        {
+            lua_sethook(L, 0, 0, 0);
+        }
+    }
+
+    static void AgentWriteDebugStatus(HEngine engine, bool ok, const char* op)
+    {
+        char extra[512];
+        uint32_t bp = 0;
+        for (uint32_t i = 0; i < AGENT_MAX_BREAKPOINTS; ++i)
+        {
+            if (g_AgentBreakpoints[i].m_Used) bp++;
+        }
+        dmSnPrintf(extra, sizeof(extra),
+                   "op=%s\npaused=%s\nbreak_file=%s\nbreak_line=%d\nbreakpoints=%u\n",
+                   op ? op : "status",
+                   g_AgentPaused ? "true" : "false",
+                   g_AgentLastBreakFile,
+                   g_AgentLastBreakLine,
+                   bp);
+        AgentWriteReady(engine->m_AgentControlDir, "debug", ok, extra);
+    }
+
+    static void MaybeAgentControlDebug(HEngine engine)
+    {
+        if (!engine->m_AgentControlDir[0])
+        {
+            return;
+        }
+        char body[1024];
+        if (!AgentReadRequest(engine->m_AgentControlDir, "debug", body, sizeof(body), 0x0))
+        {
+            return;
+        }
+        char op[32] = "status";
+        char file[256] = "";
+        int line = 0;
+        char* cursor = body;
+        while (cursor && *cursor)
+        {
+            char* row = cursor;
+            char* nl = strchr(cursor, '\n');
+            if (nl)
+            {
+                *nl = 0;
+                cursor = nl + 1;
+            }
+            else
+            {
+                cursor = 0;
+            }
+            TrimControlLine(row);
+            if (!row[0] || row[0] == '#')
+            {
+                continue;
+            }
+            if (strncmp(row, "op=", 3) == 0)
+            {
+                dmStrlCpy(op, row + 3, sizeof(op));
+            }
+            else if (strncmp(row, "file=", 5) == 0)
+            {
+                dmStrlCpy(file, row + 5, sizeof(file));
+            }
+            else if (strncmp(row, "line=", 5) == 0)
+            {
+                line = atoi(row + 5);
+            }
+        }
+        if (strcmp(op, "pause") == 0)
+        {
+            g_AgentPaused = true;
+            g_AgentStepThisFrame = false;
+            AgentWriteDebugStatus(engine, true, op);
+            return;
+        }
+        if (strcmp(op, "continue") == 0)
+        {
+            g_AgentPaused = false;
+            g_AgentStepThisFrame = false;
+            g_AgentPauseAfterSim = false;
+            AgentWriteDebugStatus(engine, true, op);
+            return;
+        }
+        if (strcmp(op, "step") == 0)
+        {
+            g_AgentPaused = false;
+            g_AgentStepThisFrame = true;
+            g_AgentPauseAfterSim = true;
+            AgentWriteDebugStatus(engine, true, op);
+            return;
+        }
+        if (strcmp(op, "set_breakpoint") == 0)
+        {
+            if (!file[0] || line <= 0)
+            {
+                AgentWriteReady(engine->m_AgentControlDir, "debug", false, "set_breakpoint needs file and line");
+                return;
+            }
+            int slot = -1;
+            for (uint32_t i = 0; i < AGENT_MAX_BREAKPOINTS; ++i)
+            {
+                if (g_AgentBreakpoints[i].m_Used &&
+                    g_AgentBreakpoints[i].m_Line == line &&
+                    strcmp(g_AgentBreakpoints[i].m_File, file) == 0)
+                {
+                    slot = (int)i;
+                    break;
+                }
+                if (slot < 0 && !g_AgentBreakpoints[i].m_Used)
+                {
+                    slot = (int)i;
+                }
+            }
+            if (slot < 0)
+            {
+                AgentWriteReady(engine->m_AgentControlDir, "debug", false, "breakpoint budget exceeded");
+                return;
+            }
+            dmStrlCpy(g_AgentBreakpoints[slot].m_File, file, sizeof(g_AgentBreakpoints[slot].m_File));
+            g_AgentBreakpoints[slot].m_Line = line;
+            g_AgentBreakpoints[slot].m_Used = true;
+            AgentEnsureLineHook(engine);
+            AgentWriteDebugStatus(engine, true, op);
+            return;
+        }
+        if (strcmp(op, "clear_breakpoint") == 0)
+        {
+            for (uint32_t i = 0; i < AGENT_MAX_BREAKPOINTS; ++i)
+            {
+                if (!g_AgentBreakpoints[i].m_Used)
+                {
+                    continue;
+                }
+                if (file[0] && strcmp(g_AgentBreakpoints[i].m_File, file) != 0)
+                {
+                    continue;
+                }
+                if (line > 0 && g_AgentBreakpoints[i].m_Line != line)
+                {
+                    continue;
+                }
+                g_AgentBreakpoints[i].m_Used = false;
+            }
+            AgentEnsureLineHook(engine);
+            AgentWriteDebugStatus(engine, true, op);
+            return;
+        }
+        if (strcmp(op, "status") == 0 || strcmp(op, "stack") == 0)
+        {
+            AgentWriteDebugStatus(engine, true, op);
+            return;
+        }
+        AgentWriteReady(engine->m_AgentControlDir, "debug", false, "unknown debug op");
+    }
+
+    static bool AgentShouldSkipSim(HEngine engine)
+    {
+        (void)engine;
+        if (g_AgentStepThisFrame)
+        {
+            g_AgentStepThisFrame = false;
+            return false;
+        }
+        return g_AgentPaused;
+    }
+
     // Return true if the frame should be skipped
     static bool UpdateFrameThrottle(HEngine engine, float dt, bool has_input)
     {
@@ -2515,13 +3273,28 @@ bail:
                     DM_PROFILE("Hid");
                     has_input = dmHID::Update(engine->m_HidContext);
                 }
+                if (MaybeAgentControlInput(engine))
+                {
+                    has_input = true;
+                }
+                ApplyAgentInputHolds(engine);
+                MaybeAgentControlEval(engine);
+                MaybeAgentControlDebug(engine);
+                bool skip_sim = AgentShouldSkipSim(engine);
 
                 // Check if we should skip this frame
-                if (UpdateFrameThrottle(engine, dt, has_input))
+                if (!skip_sim && UpdateFrameThrottle(engine, dt, has_input))
                 {
                     ProfileFrameEnd(profile);
                     return;
                 }
+
+                if (skip_sim)
+                {
+                    dmMessage::Dispatch(engine->m_SystemSocket, Dispatch, engine);
+                }
+                else
+                {
 
                 if (!engine->m_RunWhileIconified) {
                     if (dmGraphics::GetWindowStateParam(engine->m_GraphicsContext, WINDOW_STATE_ICONIFIED))
@@ -2691,6 +3464,12 @@ bail:
                 }
 
                 dmMessage::Dispatch(engine->m_SystemSocket, Dispatch, engine);
+                if (g_AgentPauseAfterSim)
+                {
+                    g_AgentPaused = true;
+                    g_AgentPauseAfterSim = false;
+                }
+                } // !skip_sim
             } // Sim
 
             DM_PROPERTY_SET_U32(rmtp_LuaRefs, dmScript::GetLuaRefCount());

@@ -419,6 +419,9 @@ def doctor_payload(project: Path, params: Optional[Dict[str, Any]] = None) -> Di
                 "--agent-control=dir",
                 "--debug-collisions",
             ],
+            "input": "defold_agent.py input --key left --hold 4",
+            "eval": "defold_agent.py eval --code \"return 1+1\" --confirm",
+            "debug": "defold_agent.py debug --op status",
         },
         "source": "doctor",
         "mcp": {"transport": "stdio", "tools": len(TOOLS), "url": None},
@@ -868,6 +871,41 @@ def cmd_project_stop(args: argparse.Namespace) -> int:
     return _dump_command(result, args.out)
 
 
+def cmd_runtime_input(args: argparse.Namespace) -> int:
+    args.name = "runtime_input"
+    params: Dict[str, Any] = {}
+    if getattr(args, "key", None):
+        params["keys"] = args.key
+    if getattr(args, "mouse_button", None):
+        params["mouse_buttons"] = args.mouse_button
+    if getattr(args, "x", None) is not None and getattr(args, "y", None) is not None:
+        params["x"] = args.x
+        params["y"] = args.y
+    if getattr(args, "text", None):
+        params["text"] = args.text
+    if getattr(args, "hold", None):
+        params["hold"] = args.hold
+    args.params = json.dumps(params)
+    return cmd_command(args)
+
+
+def cmd_game_eval(args: argparse.Namespace) -> int:
+    args.name = "game_eval"
+    args.params = json.dumps({"code": args.code, "confirm": bool(args.confirm)})
+    return cmd_command(args)
+
+
+def cmd_runtime_debug(args: argparse.Namespace) -> int:
+    args.name = "runtime_debug"
+    params: Dict[str, Any] = {"op": args.op}
+    if getattr(args, "file", None):
+        params["file"] = args.file
+    if getattr(args, "line", None) is not None:
+        params["line"] = args.line
+    args.params = json.dumps(params)
+    return cmd_command(args)
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     project = find_project(Path(args.project) if args.project else None)
     return serve_stdio(project, args.timeout, exclude_domains=args.exclude_domains)
@@ -1057,6 +1095,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     project_stop_cmd = sub.add_parser("project-stop", parents=[common], help="Stop the CLI-owned live dmengine.")
     project_stop_cmd.set_defaults(func=cmd_project_stop)
+
+    runtime_input_cmd = sub.add_parser("input", parents=[common], help="Inject HID into the live engine via control files.")
+    runtime_input_cmd.add_argument("--key", action="append", help="Key name. Repeatable. Example: left, space, a.")
+    runtime_input_cmd.add_argument("--mouse-button", action="append")
+    runtime_input_cmd.add_argument("--x", type=int)
+    runtime_input_cmd.add_argument("--y", type=int)
+    runtime_input_cmd.add_argument("--text")
+    runtime_input_cmd.add_argument("--hold", type=int, default=1)
+    runtime_input_cmd.set_defaults(func=cmd_runtime_input)
+
+    game_eval_cmd = sub.add_parser("eval", parents=[common], help="Run a short Lua chunk in the live engine. Requires --confirm.")
+    game_eval_cmd.add_argument("--code", required=True)
+    game_eval_cmd.add_argument("--confirm", action="store_true")
+    game_eval_cmd.set_defaults(func=cmd_game_eval)
+
+    runtime_debug_cmd = sub.add_parser("debug", parents=[common], help="Pause/step/breakpoint via control files. Never debug>.")
+    runtime_debug_cmd.add_argument(
+        "--op",
+        default="status",
+        choices=("status", "stack", "pause", "continue", "step", "set_breakpoint", "clear_breakpoint"),
+    )
+    runtime_debug_cmd.add_argument("--file")
+    runtime_debug_cmd.add_argument("--line", type=int)
+    runtime_debug_cmd.set_defaults(func=cmd_runtime_debug)
 
     mcp = sub.add_parser("mcp", parents=[common], help="stdio MCP (Content-Length JSON-RPC). No HTTP MCP.")
     mcp.add_argument(

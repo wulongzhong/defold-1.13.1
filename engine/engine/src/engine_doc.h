@@ -133,10 +133,12 @@
  */
 
 /*# file handshake for live agent dumps
- * Watch `DIR/dump.request` and `DIR/screenshot.request` each frame. When
- * present, write the scene graph or a PNG to the path inside that file
- * (or `DIR/dump.json` / `DIR/shot.png`) and replace it with `*.ready`.
- * No HTTP. Used by `defold_agent.py` live observe and runtime_screenshot.
+ * Watch `DIR/dump.request`, `DIR/screenshot.request`, `DIR/input.request`,
+ * `DIR/eval.request`, and `DIR/debug.request` each frame. Dump/screenshot
+ * write a scene graph or PNG. Input injects HID. Eval runs a short Lua
+ * chunk. Debug pause/step/breakpoints never sit at an interactive prompt.
+ * Replies are `*.ready`. No HTTP. Used by `defold_agent.py` live observe
+ * and R3 intervention tools.
  *
  * @macro
  * @name --agent-control=
