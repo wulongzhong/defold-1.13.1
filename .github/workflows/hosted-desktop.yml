@@ -43,6 +43,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Restore Unix execute bits
+        run: |
+          chmod +x \
+            ci/ci.sh \
+            scripts/build.py \
+            com.dynamo.cr/com.dynamo.cr.bob/gradlew \
+            com.dynamo.cr/com.dynamo.cr.bob.test/gradlew \
+            engine/ddf/src/ddfc_cxx \
+            engine/ddf/src/ddfc_java \
+            engine/ddf/src/ddfc.py
+
       - name: Cache Defold downloads
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -109,8 +120,10 @@ jobs:
 
       - name: Build bob
         run: |
+          OLDPATH="$PATH"
           python -u scripts/build.py --save-env-path=ci/env.sh save_env
           source ci/env.sh
+          export PATH="$PATH:$OLDPATH"
           python -u scripts/build.py build_bob --platform=${{ matrix.platform }} --skip-tests --disable-ccache
 
       - name: Upload bob
