@@ -741,11 +741,29 @@ def handle_camera(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     if not op:
         return error_envelope("MISSING_PARAM", "camera_manage needs op")
     path = params.get("path") or params.get("gameobject") or params.get("go")
-    ident = params.get("id") or "camera"
+    collection = params.get("collection")
+    ident = params.get("component") or "camera"
+    if not collection:
+        ident = params.get("id") or ident
     try:
         if op == "add":
+            if collection and params.get("id"):
+                from agent_ops import disk_command
+
+                return disk_command(
+                    project,
+                    "component_add",
+                    {
+                        "collection": collection,
+                        "id": params.get("id"),
+                        "type": "camera",
+                    },
+                )
             if not path:
-                return error_envelope("MISSING_PARAM", "camera_manage add needs path to a .go")
+                return error_envelope(
+                    "MISSING_PARAM",
+                    "camera_manage add needs a .go path, or collection and id",
+                )
             path = sanitize_proj_path(str(path))
             text = read_resource(project, path)
             if f'id: "{ident}"' in text and "type: \"camera\"" in text:

@@ -33,6 +33,7 @@
             [editor.resource :as resource]
             [editor.resource-node :as resource-node]
             [editor.system :as system]
+            [editor.ui :as ui]
             [editor.web-server :as web-server]
             [editor.workspace :as workspace]
             [util.coll :as coll]
@@ -281,9 +282,11 @@
       node)))
 
 (defn- resolve-collection-node [ctx params]
-  (let [path (or (optional-string params :path)
-                 (optional-string params :collection)
-                 (optional-string params :collection_path))]
+  (let [path (or (optional-string params :collection)
+                 (optional-string params :collection_path)
+                 (let [raw (optional-string params :path)]
+                   (when (and raw (string/ends-with? raw ".collection"))
+                     raw)))]
     (if-not path
       (fail! "MISSING_PARAM" "Missing collection path" "Pass `path` or `collection`.")
       (let [node (resolve-resource-node ctx path)]
@@ -318,7 +321,11 @@
 (defn- capture-created-node [f]
   (let [created (atom nil)]
     (f (fn [node-ids]
-         (reset! created (first node-ids))))
+         (let [node-id (if (sequential? node-ids)
+                         (first node-ids)
+                         node-ids)]
+           (reset! created node-id)
+           [])))
     (or @created
         (fail! "HANDLER_ERROR" "The editor did not return the created node" nil))))
 
@@ -527,8 +534,15 @@
         offset (or (get params :offset) 0)
         limit (or (get params :limit) 200)]
     (if (g/error? outline)
-      (fail! "HANDLER_ERROR" "Collection outline has errors" nil)
-      (let [children (or (:children outline) [])
+      (fail! "HANDLER_ERROR"
+             "Collection outline has errors"
+             "Fix the broken resources shown in the editor outline."
+             {:issues (into []
+                            (comp (keep :message)
+                                  (distinct)
+                                  (take 8))
+                            (g/flatten-errors outline))})
+      (let [children (or (:children outline) [])]
             page (into [] (comp (drop offset) (take limit)) children)]
         {:path (resource/proj-path (g/node-value collection-node :resource))
          :id (outline-label outline (:localization ctx))
@@ -645,7 +659,8 @@
         opened (atom false)]
     (when (and app-view (:prefs ctx) (:localization ctx))
       (try
-        (reset! opened (boolean (app-view/open-resource! app-view (:prefs ctx) (:localization ctx) (:project ctx) resource)))
+        (ui/run-now
+          (reset! opened (boolean (app-view/open-resource! app-view (:prefs ctx) (:localization ctx) (:project ctx) resource))))
         (catch Exception _)))
     {:path path
      :opened @opened}))

@@ -2087,6 +2087,10 @@ def dispatch_command(
     from agent_domain import DOMAIN_COMMANDS, handle_domain_command
 
     if command in DOMAIN_COMMANDS:
+        if command == "camera_manage" and read_editor_endpoint(project) is not None:
+            editor = editor_command(project, command, params, timeout)
+            if editor is not None and editor.get("status") == "ok":
+                return overlay_readiness(project, editor)
         result = handle_domain_command(project, command, params)
         path = (result.get("data") or {}).get("path")
         if result.get("status") == "ok" and path and result.get("data", {}).get("undoable") is False:

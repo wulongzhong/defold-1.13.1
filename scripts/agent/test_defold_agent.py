@@ -743,10 +743,62 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", result["status"])
             self.assertTrue(result["data"]["ready"]["game_project"])
             self.assertIn("bob", result["data"]["ready"])
+            self.assertIn("user_path", result["data"]["ready"])
+            self.assertFalse(result["data"]["java_required"])
             self.assertEqual("stdio", result["data"]["mcp"]["transport"])
             self.assertIsNone(result["data"]["mcp"]["url"])
             self.assertGreater(result["data"]["mcp"]["tools"], 20)
             self.assertLess(result["data"]["mcp"]["tools"], 100)
+
+    def test_find_engine_uses_editor_unpack(self):
+        import os
+        import tempfile
+        from pathlib import Path
+
+        from defold_agent import find_engine
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            unpack = root / "Defold" / "unpack" / "abc-x86_64" / "x86_64-win32" / "bin"
+            unpack.mkdir(parents=True)
+            engine = unpack / ("dmengine.exe" if os.name == "nt" else "dmengine")
+            engine.write_bytes(b"x")
+            old_local = os.environ.get("LOCALAPPDATA")
+            old_engine = os.environ.get("DEFOLD_ENGINE")
+            os.environ["LOCALAPPDATA"] = str(root)
+            os.environ.pop("DEFOLD_ENGINE", None)
+            try:
+                found = find_engine(project=root / "missing")
+                self.assertIsNotNone(found)
+                self.assertEqual(engine.resolve(), found.resolve())
+            finally:
+                if old_local is None:
+                    os.environ.pop("LOCALAPPDATA", None)
+                else:
+                    os.environ["LOCALAPPDATA"] = old_local
+                if old_engine is None:
+                    os.environ.pop("DEFOLD_ENGINE", None)
+                else:
+                    os.environ["DEFOLD_ENGINE"] = old_engine
+
+    def test_camera_manage_accepts_collection_and_id(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            dispatch_command(project, "gameobject_create", {"collection": "/main/main.collection", "id": "cube"}, 2)
+            result = dispatch_command(
+                project,
+                "camera_manage",
+                {"op": "add", "collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertEqual("ok", result["status"], result)
+            text = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertIn("camera", text)
 
     def test_domain_atlas_and_input(self):
         import tempfile

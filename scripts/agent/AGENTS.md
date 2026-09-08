@@ -37,14 +37,14 @@ Every command prints JSON on stdout.
 
 `check` compiles and does **not** launch the game.
 
-1. `bob --variant=debug --diagnostics-json=... build` — works with the editor closed.
-2. If the editor is open and you pass `--editor`, it uses `POST /command/check` (compile only, same issue JSON). `/command/build` launches the game; do not use that as a syntax check.
+1. If the packaged editor is open, `check` uses `POST /command/check` (compile only, same issue JSON). `/command/build` launches the game; do not use that as a syntax check.
+2. `bob --variant=debug --diagnostics-json=... build` is only a fallback when the editor is closed. Do **not** install a JDK on the user machine; use the packaged `Defold-x86_64-win32` editor instead.
 
 Need tools:
 
-- `DEFOLD_BOB` or `--bob` pointing at `bob.jar`
-- a JDK on `PATH` if bob is a jar
-- `DEFOLD_ENGINE` or `--engine` pointing at `dmengine` for `run` / `observe`
+- An open packaged Defold editor (preferred user path; bundled JRE, no system JDK)
+- `DEFOLD_ENGINE` or the editor unpack `dmengine` for `run` / `observe`
+- `DEFOLD_BOB` only if you already have bob and are not using the editor
 
 ## Observe (structured runtime, not a screenshot loop)
 

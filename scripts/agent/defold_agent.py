@@ -33,6 +33,7 @@ from agent_mcp import TOOLS, mcp_client_config, serve_stdio
 from agent_ops import (
     dispatch_command,
     error_envelope,
+    ok_envelope,
     read_editor_endpoint as ops_read_editor_endpoint,
 )
 from agent_runtime import (
@@ -95,6 +96,104 @@ def _walk_parents(start: Path) -> Iterable[Path]:
     yield from cur.parents
 
 
+NO_JDK_HINT = (
+    "Open the packaged Defold editor on this project so check can use POST /command/check. "
+    "Do not install a JDK."
+)
+
+
+def editor_is_open(project: Path) -> bool:
+    return read_editor_endpoint(project) is not None
+
+
+def prefer_editor_check(project: Path, explicit: Optional[bool] = None) -> bool:
+    if explicit is True:
+        return True
+    return editor_is_open(project)
+
+
+def _defold_support_dir() -> Path:
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        return Path(local) / "Defold"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Defold"
+    xdg = os.environ.get("XDG_STATE_HOME") or os.environ.get("XDG_DATA_HOME")
+    if xdg:
+        return Path(xdg) / "Defold"
+    return Path.home() / ".local" / "share" / "Defold"
+
+
+def find_editor_exe(explicit: Optional[str] = None, project: Optional[Path] = None) -> Optional[Path]:
+    if explicit:
+        path = Path(explicit)
+        return path if path.is_file() else None
+    env = os.environ.get("DEFOLD_EDITOR")
+    if env:
+        path = Path(env)
+        if path.is_file():
+            return path
+    exe = "Defold.exe" if os.name == "nt" else "Defold"
+    search_roots: List[Path] = []
+    if project:
+        search_roots.extend(_walk_parents(project))
+    search_roots.extend(_walk_parents(Path(__file__).resolve().parent))
+    rels = (
+        Path(".cache") / "Defold-x86_64-win32" / "Defold" / exe,
+        Path(".cache") / "Defold-x86_64-win32" / exe,
+        Path("Defold") / exe,
+        Path(exe),
+    )
+    for root in search_roots:
+        for rel in rels:
+            candidate = root / rel
+            if candidate.is_file():
+                return candidate
+        artifacts = root / ".cache" / "artifacts"
+        if artifacts.is_dir():
+            matches = sorted(artifacts.glob(f"*/Defold*/Defold/{exe}"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if matches:
+                return matches[0]
+            matches = sorted(artifacts.glob(f"*/Defold/{exe}"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if matches:
+                return matches[0]
+    which = shutil.which("Defold") or shutil.which("Defold.exe")
+    return Path(which) if which else None
+
+
+def _editor_sha1_from_config(editor_exe: Path) -> Optional[str]:
+    config = editor_exe.parent / "config"
+    if not config.is_file():
+        return None
+    for line in config.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith("editor_sha1"):
+            _, _, value = line.partition("=")
+            value = value.strip()
+            return value or None
+    return None
+
+
+def _unpack_engine_candidates(editor_exe: Optional[Path] = None) -> List[Path]:
+    exe = "dmengine.exe" if os.name == "nt" else "dmengine"
+    host = _host_bin_name()
+    found: List[Path] = []
+    unpack_root = _defold_support_dir() / "unpack"
+    if editor_exe:
+        sha1 = _editor_sha1_from_config(editor_exe)
+        if sha1:
+            machine = platform.machine().lower()
+            arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+            preferred = unpack_root / f"{sha1}-{arch}" / host / "bin" / exe
+            if preferred.is_file():
+                found.append(preferred)
+    if unpack_root.is_dir():
+        for candidate in unpack_root.glob(f"*/{host}/bin/{exe}"):
+            if candidate.is_file() and candidate not in found:
+                found.append(candidate)
+    found.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return found
+
+
 def find_bob(explicit: Optional[str] = None, project: Optional[Path] = None) -> Optional[Path]:
     if explicit:
         path = Path(explicit)
@@ -132,6 +231,10 @@ def find_engine(explicit: Optional[str] = None, project: Optional[Path] = None) 
         path = Path(env)
         if path.exists():
             return path
+    editor_exe = find_editor_exe(os.environ.get("DEFOLD_EDITOR"), project)
+    unpacked = _unpack_engine_candidates(editor_exe)
+    if unpacked:
+        return unpacked[0]
     exe = "dmengine.exe" if os.name == "nt" else "dmengine"
     search_roots = []
     if project:
@@ -231,7 +334,7 @@ def bob_argv(bob: Path, extra: Sequence[str]) -> List[str]:
     if bob.suffix.lower() == ".jar":
         java = find_java()
         if not java:
-            raise FileNotFoundError("java not found. Install a JDK or set PATH.")
+            raise FileNotFoundError(NO_JDK_HINT)
         return [java, "-jar", str(bob), *extra]
     return [str(bob), *extra]
 
@@ -251,7 +354,15 @@ def run_bob(
     if diagnostics_path:
         args.extend(["--diagnostics-json", str(diagnostics_path)])
     args.extend(extra)
-    cmd = bob_argv(bob, args)
+    try:
+        cmd = bob_argv(bob, args)
+    except FileNotFoundError as error:
+        return {
+            "success": False,
+            "source": "agent",
+            "exit_code": 1,
+            "issues": [_issue("error", str(error))],
+        }
     proc = subprocess.run(cmd, cwd=str(project), capture_output=True, text=True)
     log = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
     issues = parse_log(log)
@@ -294,8 +405,7 @@ def check_project(
             "issues": [
                 _issue(
                     "error",
-                    "bob not found. Set DEFOLD_BOB or pass --bob. "
-                    "If the editor is open, retry with --editor after rebuilding the editor with /command/check.",
+                    "bob not found. " + NO_JDK_HINT,
                 )
             ],
         }
@@ -401,7 +511,9 @@ def doctor_payload(project: Path, params: Optional[Dict[str, Any]] = None) -> Di
             "java": bool(find_java()),
             "editor": bool(editor),
             "game_project": (project / "game.project").is_file(),
+            "user_path": bool(editor) or bool(engine),
         },
+        "java_required": False,
         "hints": {
             "check": "defold_agent.py check --project <dir>",
             "run": "defold_agent.py run --frames 30 --runtime-dump .internal/agent/snapshots/raw.json",
@@ -433,7 +545,13 @@ def project_doctor(project: Path, params: Optional[Dict[str, Any]] = None) -> Di
     from agent_ops import ok_envelope
 
     data = doctor_payload(project, params)
-    readiness = "ready" if data["ready"]["game_project"] else "no_collection"
+    ready = data["ready"]
+    if not ready.get("game_project"):
+        readiness = "no_collection"
+    elif ready.get("editor") or ready.get("engine"):
+        readiness = "ready"
+    else:
+        readiness = "need_editor"
     return ok_envelope(data, readiness=readiness)
 
 
@@ -453,7 +571,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_check(args: argparse.Namespace) -> int:
     project = find_project(Path(args.project) if args.project else None)
     bob = find_bob(args.bob, project)
-    payload = check_project(project, bob, prefer_editor=args.editor, timeout=args.timeout)
+    payload = check_project(
+        project, bob, prefer_editor=prefer_editor_check(project, args.editor), timeout=args.timeout
+    )
     dump_json(payload, Path(args.out) if args.out else None)
     return 0 if payload.get("success") else 1
 
@@ -463,7 +583,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     bob = find_bob(args.bob, project)
     engine = find_engine(args.engine, project)
     if not args.no_build:
-        build_payload = check_project(project, bob, prefer_editor=False, timeout=args.timeout)
+        build_payload = check_project(
+            project, bob, prefer_editor=prefer_editor_check(project, True), timeout=args.timeout
+        )
         if not build_payload.get("success"):
             dump_json(build_payload, Path(args.out) if args.out else None)
             return 1
@@ -510,7 +632,9 @@ def observe_runtime(project: Path, params: Dict[str, Any], timeout: float) -> Di
     bob = find_bob(params.get("bob"), project)
     engine = find_engine(params.get("engine"), project)
     if not params.get("no_build"):
-        build_payload = check_project(project, bob, prefer_editor=False, timeout=timeout)
+        build_payload = check_project(
+            project, bob, prefer_editor=prefer_editor_check(project, True), timeout=timeout
+        )
         if not build_payload.get("success"):
             return error_envelope(
                 "HANDLER_ERROR",
@@ -576,7 +700,9 @@ def project_run(project: Path, params: Dict[str, Any], timeout: float) -> Dict[s
     engine = find_engine(params.get("engine"), project)
     bob = find_bob(params.get("bob"), project)
     if not params.get("no_build"):
-        build_payload = check_project(project, bob, prefer_editor=False, timeout=timeout)
+        build_payload = check_project(
+            project, bob, prefer_editor=prefer_editor_check(project, True), timeout=timeout
+        )
         if not build_payload.get("success"):
             return error_envelope(
                 "HANDLER_ERROR",
@@ -709,7 +835,9 @@ def cmd_shot(args: argparse.Namespace) -> int:
 def cmd_loop(args: argparse.Namespace) -> int:
     project = find_project(Path(args.project) if args.project else None)
     bob = find_bob(args.bob, project)
-    check_payload = check_project(project, bob, prefer_editor=args.editor, timeout=args.timeout)
+    check_payload = check_project(
+        project, bob, prefer_editor=prefer_editor_check(project, args.editor), timeout=args.timeout
+    )
     if not check_payload.get("success"):
         dump_json(check_payload, Path(args.out) if args.out else None)
         return 1
