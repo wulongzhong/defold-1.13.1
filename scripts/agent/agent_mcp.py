@@ -187,6 +187,8 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "collection": {"type": "string"},
             "offset": {"type": "integer", "default": 0},
             "limit": {"type": "integer", "default": 200},
+            "nested": {"type": "boolean", "description": "If true, children are nested under parents. Default is a flat list with parent ids."},
+            "tree": {"type": "boolean"},
         },
     },
     "gameobject_get_properties": {

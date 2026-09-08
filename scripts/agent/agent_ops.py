@@ -745,6 +745,14 @@ def parse_collection_hierarchy(text: str, path: str) -> Dict[str, Any]:
     }
 
 
+def nest_collection_nodes(flat: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_id = {item["id"]: dict(item) for item in flat if item.get("id")}
+    for node in by_id.values():
+        child_ids = node.get("children") or []
+        node["children"] = [by_id[child_id] for child_id in child_ids if child_id in by_id]
+    return [node for node in by_id.values() if not node.get("parent")]
+
+
 def parse_game_project(text: str) -> Dict[str, str]:
     section = ""
     values: Dict[str, str] = {}
@@ -878,6 +886,10 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             offset = max(int(params.get("offset") or 0), 0)
             limit = max(int(params.get("limit") or 200), 1)
             children = data.get("children") or []
+            nested = bool(params.get("nested") or params.get("tree"))
+            if nested:
+                children = nest_collection_nodes(children)
+            data["nested"] = nested
             data["offset"] = offset
             data["limit"] = limit
             data["truncated"] = offset + limit < len(children)

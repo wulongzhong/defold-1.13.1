@@ -922,6 +922,15 @@ class ToolQualityTest(unittest.TestCase):
             by_id = {item["id"]: item for item in tree["data"]["children"]}
             self.assertEqual(["hat"], by_id["cube"]["children"])
             self.assertEqual("cube", by_id["hat"]["parent"])
+            nested = dispatch_command(
+                project,
+                "collection_get_hierarchy",
+                {"path": "/main/main.collection", "nested": True},
+                2,
+            )
+            self.assertTrue(nested["data"]["nested"])
+            self.assertEqual(["cube"], [item["id"] for item in nested["data"]["children"]])
+            self.assertEqual("hat", nested["data"]["children"][0]["children"][0]["id"])
             props = dispatch_command(
                 project,
                 "gameobject_get_properties",
