@@ -35,6 +35,8 @@ DOMAIN_EXT = {
     "collectionfactory_manage": "collectionfactory",
     "collectionproxy_manage": "collectionproxy",
     "collisionobject_manage": "collisionobject",
+    "cubemap_manage": "cubemap",
+    "mesh_manage": "mesh",
 }
 
 FALLBACK_TEMPLATES = {
@@ -127,6 +129,8 @@ FALLBACK_TEMPLATES = {
         'group: "default"\n'
         'mask: "default"\n'
     ),
+    "cubemap": 'right: ""\nleft: ""\ntop: ""\nbottom: ""\nfront: ""\nback: ""\n',
+    "mesh": 'material: "/builtins/materials/model_lit.material"\nvertices: ""\n',
 }
 
 CAMERA_BLOCK = """
@@ -314,6 +318,12 @@ def summarize(command: str, path: str, text: str) -> Dict[str, Any]:
         data["collision_shape"] = scalar(text, "collision_shape")
         data["group"] = scalar(text, "group")
         data["type"] = scalar(text, "type")
+    elif command == "cubemap_manage":
+        data["right"] = scalar(text, "right")
+        data["left"] = scalar(text, "left")
+    elif command == "mesh_manage":
+        data["material"] = scalar(text, "material")
+        data["vertices"] = scalar(text, "vertices")
     return data
 
 

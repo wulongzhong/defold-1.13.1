@@ -82,6 +82,8 @@ TOOLS = [
     ("collectionfactory_manage", "Create/get/list collection factories."),
     ("collectionproxy_manage", "Create/get/list collection proxies."),
     ("collisionobject_manage", "Create/get/list collision object files."),
+    ("cubemap_manage", "Create/get/list cubemap face images."),
+    ("mesh_manage", "Create/get/list .mesh files."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
@@ -477,6 +479,34 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
             "path": {"type": "string"},
             "collision_shape": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "cubemap_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "mesh_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
             "name": {"type": "string"},
             "property": {"type": "string"},
             "value": {},

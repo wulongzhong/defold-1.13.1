@@ -650,6 +650,21 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual("ok", attached["status"])
             self.assertIn('type: "sprite"', (project / "main" / "cube.go").read_text(encoding="utf-8"))
+            painted = dispatch_command(
+                project,
+                "component_manage",
+                {
+                    "op": "set_property",
+                    "path": "/main/cube.go",
+                    "id": "cube",
+                    "component": "sprite",
+                    "property": "default_animation",
+                    "value": "idle",
+                },
+                2,
+            )
+            self.assertEqual("ok", painted["status"])
+            self.assertIn("idle", (project / "main" / "cube.go").read_text(encoding="utf-8"))
             scripted = dispatch_command(
                 project,
                 "script_attach",
@@ -820,6 +835,8 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("ok", proxy["status"])
+            cube_map = dispatch_command(project, "cubemap_manage", {"op": "create", "path": "/main/sky.cubemap"}, 2)
+            self.assertEqual("ok", cube_map["status"])
 
     def test_logs_read_source_engine(self):
         import tempfile

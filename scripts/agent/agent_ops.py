@@ -895,6 +895,61 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 new_block = replace_data_field(block, remove_component_from_go(go_text, str(component)))
                 _write_text(project, collection, replace_instance_block(text, str(go_id), new_block), overwrite=True)
                 return ok_envelope({"deleted": True, "id": go_id, "component": component, "undoable": False, "source": "disk"})
+            if op == "set_property":
+                key = params.get("property") or params.get("key")
+                if not key:
+                    return error_envelope("MISSING_PARAM", "set_property needs property")
+                text = _read_text(project, collection)
+                if str(collection).endswith(".go"):
+                    go_text = text
+                    write_path = collection
+                    wrapper = None
+                else:
+                    _start, _end, block = find_instance_span(text, str(go_id))
+                    proto = instance_prototype(block)
+                    if proto:
+                        go_text = _read_text(project, proto)
+                        write_path = proto
+                        wrapper = None
+                    else:
+                        go_text = decode_data_field(block) or ""
+                        write_path = collection
+                        wrapper = (text, str(go_id), block)
+                marker = f'id: "{component}"'
+                start = go_text.find(marker)
+                if start < 0:
+                    return error_envelope("NOT_FOUND", f"Component '{component}' was not found")
+                comp_block = extract_brace_block(go_text, start)
+                if not comp_block:
+                    return error_envelope("NOT_FOUND", f"Component '{component}' was not found")
+                inner = decode_data_field(comp_block)
+                if inner is None:
+                    return error_envelope("NOT_ALLOWED", "Referenced components have no embedded data to set")
+                from agent_domain import set_scalar
+
+                new_inner = set_scalar(inner, str(key), str(params.get("value", "")))
+                new_comp = replace_data_field(comp_block, new_inner)
+                go_text = go_text.replace(comp_block, new_comp, 1)
+                if wrapper:
+                    collection_text, instance_id, instance_block = wrapper
+                    _write_text(
+                        project,
+                        write_path,
+                        replace_instance_block(collection_text, instance_id, replace_data_field(instance_block, go_text)),
+                        overwrite=True,
+                    )
+                else:
+                    _write_text(project, write_path, go_text, overwrite=True)
+                return ok_envelope(
+                    {
+                        "id": go_id,
+                        "component": component,
+                        "property": key,
+                        "value": params.get("value"),
+                        "undoable": False,
+                        "source": "disk",
+                    }
+                )
             return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["remove", "set_property"])
         if command == "script_manage" and params.get("op") == "detach":
             return disk_command(project, "component_manage", {**params, "op": "remove"})
@@ -1025,6 +1080,7 @@ DISK_COMMANDS = [
     "collisionobject_manage",
     "component_add",
     "component_manage",
+    "cubemap_manage",
     "editor_manage",
     "editor_state",
     "factory_manage",
@@ -1038,6 +1094,7 @@ DISK_COMMANDS = [
     "gui_manage",
     "input_binding_manage",
     "material_manage",
+    "mesh_manage",
     "model_manage",
     "particlefx_manage",
     "project_build",

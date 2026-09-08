@@ -54,6 +54,7 @@
    "collisionobject_manage"
    "component_add"
    "component_manage"
+   "cubemap_manage"
    "display_profiles_manage"
    "editor_manage"
    "editor_preview"
@@ -69,6 +70,7 @@
    "input_binding_manage"
    "logs_read"
    "material_manage"
+   "mesh_manage"
    "model_manage"
    "particlefx_manage"
    "project_build"
@@ -935,6 +937,12 @@
 (defn- cmd-collisionobject-manage [ctx params]
   (cmd-file-domain-manage ctx params "collisionobject"))
 
+(defn- cmd-cubemap-manage [ctx params]
+  (cmd-file-domain-manage ctx params "cubemap"))
+
+(defn- cmd-mesh-manage [ctx params]
+  (cmd-file-domain-manage ctx params "mesh"))
+
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
         component (or (optional-string params :component)
@@ -991,6 +999,7 @@
    "collisionobject_manage" cmd-collisionobject-manage
    "component_add" cmd-component-add
    "component_manage" cmd-component-manage
+   "cubemap_manage" cmd-cubemap-manage
    "display_profiles_manage" cmd-display-profiles-manage
    "editor_manage" cmd-editor-manage
    "editor_preview" cmd-editor-preview
@@ -1006,6 +1015,7 @@
    "input_binding_manage" cmd-input-binding-manage
    "logs_read" cmd-logs-read
    "material_manage" cmd-material-manage
+   "mesh_manage" cmd-mesh-manage
    "model_manage" cmd-model-manage
    "particlefx_manage" cmd-particlefx-manage
    "project_build" cmd-project-build
