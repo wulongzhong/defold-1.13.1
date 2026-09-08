@@ -755,17 +755,26 @@ class ToolQualityTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from defold_agent import find_engine
+        from defold_agent import _host_bin_name, find_engine
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            unpack = root / "Defold" / "unpack" / "abc-x86_64" / "x86_64-win32" / "bin"
+            editor_dir = root / "Defold"
+            editor_dir.mkdir()
+            editor_exe = editor_dir / ("Defold.exe" if os.name == "nt" else "Defold")
+            editor_exe.write_bytes(b"editor")
+            (editor_dir / "config").write_text("editor_sha1=abc\n", encoding="utf-8")
+            host = _host_bin_name()
+            machine = "arm64" if host.startswith("arm64") else "x86_64"
+            unpack = root / "Defold" / "unpack" / f"abc-{machine}" / host / "bin"
             unpack.mkdir(parents=True)
             engine = unpack / ("dmengine.exe" if os.name == "nt" else "dmengine")
             engine.write_bytes(b"x")
             old_local = os.environ.get("LOCALAPPDATA")
             old_engine = os.environ.get("DEFOLD_ENGINE")
+            old_editor = os.environ.get("DEFOLD_EDITOR")
             os.environ["LOCALAPPDATA"] = str(root)
+            os.environ["DEFOLD_EDITOR"] = str(editor_exe)
             os.environ.pop("DEFOLD_ENGINE", None)
             try:
                 found = find_engine(project=root / "missing")
@@ -780,6 +789,55 @@ class ToolQualityTest(unittest.TestCase):
                     os.environ.pop("DEFOLD_ENGINE", None)
                 else:
                     os.environ["DEFOLD_ENGINE"] = old_engine
+                if old_editor is None:
+                    os.environ.pop("DEFOLD_EDITOR", None)
+                else:
+                    os.environ["DEFOLD_EDITOR"] = old_editor
+
+    def test_find_engine_extracts_from_editor_jar(self):
+        import os
+        import tempfile
+        import zipfile
+        from pathlib import Path
+
+        from defold_agent import _host_bin_name, find_engine
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            editor_dir = root / "boxed" / "Defold"
+            packages = editor_dir / "packages"
+            packages.mkdir(parents=True)
+            editor_exe = editor_dir / ("Defold.exe" if os.name == "nt" else "Defold")
+            editor_exe.write_bytes(b"editor")
+            (editor_dir / "config").write_text("editor_sha1=deadbeef\n", encoding="utf-8")
+            host = _host_bin_name()
+            exe_name = "dmengine.exe" if os.name == "nt" else "dmengine"
+            jar = packages / "defold-deadbeef.jar"
+            with zipfile.ZipFile(jar, "w") as zf:
+                zf.writestr(f"libexec/{host}/{exe_name}", b"custom-engine")
+            old_local = os.environ.get("LOCALAPPDATA")
+            old_engine = os.environ.get("DEFOLD_ENGINE")
+            old_editor = os.environ.get("DEFOLD_EDITOR")
+            os.environ["LOCALAPPDATA"] = str(root)
+            os.environ["DEFOLD_EDITOR"] = str(editor_exe)
+            os.environ.pop("DEFOLD_ENGINE", None)
+            try:
+                found = find_engine(project=root / "missing")
+                self.assertIsNotNone(found)
+                self.assertEqual(b"custom-engine", found.read_bytes())
+            finally:
+                if old_local is None:
+                    os.environ.pop("LOCALAPPDATA", None)
+                else:
+                    os.environ["LOCALAPPDATA"] = old_local
+                if old_engine is None:
+                    os.environ.pop("DEFOLD_ENGINE", None)
+                else:
+                    os.environ["DEFOLD_ENGINE"] = old_engine
+                if old_editor is None:
+                    os.environ.pop("DEFOLD_EDITOR", None)
+                else:
+                    os.environ["DEFOLD_EDITOR"] = old_editor
 
     def test_camera_manage_accepts_collection_and_id(self):
         import tempfile

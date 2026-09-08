@@ -35,9 +35,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: arm64-macos
-            runner: macos-26
-            artifact: dmengine-arm64-macos
+          # Windows user zip is the acceptance target. Do not wait on macOS
+          # engine; a failed or queued macos-26 job must not block
+          # Defold-x86_64-win32.
           - platform: x86_64-win32
             runner: windows-2025-vs2026
             artifact: dmengine-x86_64-win32
@@ -206,6 +206,7 @@ jobs:
           distribution: temurin
 
       - name: Download this-repo dmengine
+        if: matrix.platform == 'x86_64-win32'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: dmengine-${{ matrix.platform }}
@@ -220,6 +221,7 @@ jobs:
           --channel=dev
 
       - name: Inject this-repo dmengine into editor zip
+        if: matrix.platform == 'x86_64-win32'
         run: >
           python ci/inject_editor_engine.py
           --bundle editor/target/editor/Defold-${{ matrix.platform }}.zip

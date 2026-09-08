@@ -26,6 +26,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -178,20 +179,54 @@ def _unpack_engine_candidates(editor_exe: Optional[Path] = None) -> List[Path]:
     host = _host_bin_name()
     found: List[Path] = []
     unpack_root = _defold_support_dir() / "unpack"
-    if editor_exe:
-        sha1 = _editor_sha1_from_config(editor_exe)
-        if sha1:
-            machine = platform.machine().lower()
-            arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
-            preferred = unpack_root / f"{sha1}-{arch}" / host / "bin" / exe
-            if preferred.is_file():
-                found.append(preferred)
-    if unpack_root.is_dir():
-        for candidate in unpack_root.glob(f"*/{host}/bin/{exe}"):
-            if candidate.is_file() and candidate not in found:
-                found.append(candidate)
-    found.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    sha1 = _editor_sha1_from_config(editor_exe) if editor_exe else None
+    if sha1:
+        machine = platform.machine().lower()
+        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+        preferred = unpack_root / f"{sha1}-{arch}" / host / "bin" / exe
+        if preferred.is_file():
+            found.append(preferred)
     return found
+
+
+def _engine_from_editor_package(editor_exe: Optional[Path]) -> Optional[Path]:
+    if not editor_exe:
+        return None
+    packages = editor_exe.parent / "packages"
+    if not packages.is_dir():
+        return None
+    jars = sorted(packages.glob("defold-*.jar"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if not jars:
+        return None
+    jar = jars[0]
+    host = _host_bin_name()
+    exe_name = "dmengine.exe" if os.name == "nt" else "dmengine"
+    inner = f"libexec/{host}/{exe_name}"
+    sha1 = _editor_sha1_from_config(editor_exe) or jar.stem.replace("defold-", "", 1)
+    dest = _defold_support_dir() / "agent-engine" / sha1 / host / exe_name
+    if dest.is_file() and dest.stat().st_size > 0 and dest.stat().st_mtime >= jar.stat().st_mtime:
+        return dest
+    try:
+        with zipfile.ZipFile(jar) as zf:
+            names = {name.replace("\\", "/") for name in zf.namelist()}
+            if inner not in names:
+                matches = [
+                    name
+                    for name in names
+                    if name.endswith(f"/{exe_name}") and f"/{host}/" in f"/{name}"
+                ]
+                if not matches:
+                    return None
+                inner = matches[0]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_suffix(dest.suffix + ".tmp")
+            tmp.write_bytes(zf.read(inner))
+            tmp.replace(dest)
+            if os.name != "nt":
+                dest.chmod(dest.stat().st_mode | 0o111)
+        return dest if dest.is_file() else None
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return None
 
 
 def find_bob(explicit: Optional[str] = None, project: Optional[Path] = None) -> Optional[Path]:
@@ -235,6 +270,9 @@ def find_engine(explicit: Optional[str] = None, project: Optional[Path] = None) 
     unpacked = _unpack_engine_candidates(editor_exe)
     if unpacked:
         return unpacked[0]
+    packaged = _engine_from_editor_package(editor_exe)
+    if packaged:
+        return packaged
     exe = "dmengine.exe" if os.name == "nt" else "dmengine"
     search_roots = []
     if project:
