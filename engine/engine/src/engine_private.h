@@ -190,6 +190,7 @@ namespace dmEngine
         uint32_t                                    m_QuitAfterFrames;
         bool                                        m_DebugCollisions;
         char                                        m_ScreenshotPath[1024];
+        char                                        m_RuntimeDumpPath[1024];
     };
 
 

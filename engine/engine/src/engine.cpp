@@ -440,6 +440,7 @@ namespace dmEngine
         , m_DebugCollisions(false)
     {
         m_ScreenshotPath[0] = 0;
+        m_RuntimeDumpPath[0] = 0;
         m_EngineService = engine_service;
         m_Register = dmGameObject::NewRegister();
         m_InputBuffer.SetCapacity(64);
@@ -1053,6 +1054,7 @@ namespace dmEngine
         const char verbose_short[] = "-v";
         const char quit_after_frames_arg[] = "--quit-after-frames=";
         const char screenshot_arg[] = "--screenshot=";
+        const char runtime_dump_arg[] = "--runtime-dump=";
         const char debug_collisions_arg[] = "--debug-collisions";
         for (int i = 0; i < argc; ++i)
         {
@@ -1096,6 +1098,14 @@ namespace dmEngine
                 if (value[0])
                 {
                     dmStrlCpy(engine->m_ScreenshotPath, value, sizeof(engine->m_ScreenshotPath));
+                }
+            }
+            else if (strncmp(runtime_dump_arg, arg, sizeof(runtime_dump_arg)-1) == 0)
+            {
+                const char* value = arg + sizeof(runtime_dump_arg) - 1;
+                if (value[0])
+                {
+                    dmStrlCpy(engine->m_RuntimeDumpPath, value, sizeof(engine->m_RuntimeDumpPath));
                 }
             }
             else if (strcmp(debug_collisions_arg, arg) == 0)
@@ -2265,6 +2275,18 @@ bail:
         }
 
         int32_t exit_code = 0;
+        if (engine->m_RuntimeDumpPath[0])
+        {
+            if (dmEngineService::WriteSceneGraphJson(engine->m_Register, engine->m_RuntimeDumpPath))
+            {
+                dmLogInfo("Wrote runtime dump to '%s'", engine->m_RuntimeDumpPath);
+            }
+            else
+            {
+                dmLogError("Failed to write runtime dump '%s'", engine->m_RuntimeDumpPath);
+                exit_code = 1;
+            }
+        }
         if (engine->m_ScreenshotPath[0])
         {
             if (!CaptureScreenshot(engine, engine->m_ScreenshotPath))

@@ -119,6 +119,19 @@
  * ```
  */
 
+/*# write a runtime scene-graph dump
+ * Write the live scene graph as JSON when the engine quits (same payload as
+ * `GET /scene_graph`). Independent of `--screenshot=`. Combine with
+ * `--quit-after-frames=` so an agent can query the tree after a batch run.
+ *
+ * @macro
+ * @name --runtime-dump=
+ * @examples
+ * ```bash
+ * $ ./dmengine --quit-after-frames=30 --runtime-dump=.internal/agent/snapshots/raw.json
+ * ```
+ */
+
 /*# draw physics collision overlays
  * Enable physics debug drawing (same as `physics.debug=1`). Pair with `--screenshot=` so an
  * agent can see colliders.

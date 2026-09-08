@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import unittest
 
-from agent_ops import disk_command, parse_collection_hierarchy, patch_text
+from agent_ops import disk_command, dispatch_command, parse_collection_hierarchy, patch_text
+from agent_runtime import (
+    INLINE_BUDGET,
+    observe_envelope,
+    query_snapshot,
+    wrap_engine_dump,
+)
 from defold_agent import parse_log
 
 
@@ -103,6 +109,124 @@ class DiskCommandTest(unittest.TestCase):
             self.assertEqual("ok", patched["status"])
             text = (project / "main" / "cube.script").read_text(encoding="utf-8")
             self.assertIn("function init(self) -- hi", text)
+
+    def test_snapshot_read_text_is_blocked(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            snap = project / ".internal" / "agent" / "snapshots" / "latest.json"
+            snap.parent.mkdir(parents=True, exist_ok=True)
+            snap.write_text("{}", encoding="utf-8")
+            blocked = disk_command(
+                project,
+                "filesystem_manage",
+                {"op": "read_text", "path": "/.internal/agent/snapshots/latest.json"},
+            )
+            self.assertEqual("error", blocked["status"])
+            self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+
+
+class RuntimeSnapshotTest(unittest.TestCase):
+    def _graph(self):
+        return {
+            "id": "main",
+            "type": "collectionc",
+            "children": [
+                {
+                    "id": "cube",
+                    "type": "goc",
+                    "resource": "/main/cube.go",
+                    "world_position": [10.0, 20.0, 0.0],
+                    "velocity": 3,
+                    "children": [
+                        {"id": "sprite", "type": "spritec", "children": []},
+                    ],
+                },
+                {
+                    "id": "other",
+                    "type": "goc",
+                    "world_position": [1.0, 2.0, 3.0],
+                    "children": [],
+                },
+            ],
+        }
+
+    def _project_with_snapshot(self, tmp):
+        from pathlib import Path
+
+        project = Path(tmp)
+        raw = project / "raw.json"
+        raw.write_text(__import__("json").dumps(self._graph()), encoding="utf-8")
+        record = wrap_engine_dump(project, raw, mode="batch", frame=30, target={"url": "http://127.0.0.1:8001"})
+        return project, record
+
+    def test_observe_summary_has_no_tree(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, record = self._project_with_snapshot(tmp)
+            result = observe_envelope({**record, "_path": str(project / ".internal" / "agent" / "snapshots" / f"{record['id']}.json")}, inline="summary")
+            self.assertEqual("ok", result["status"])
+            self.assertNotIn("hierarchy", result["data"])
+            self.assertNotIn("inline_data", result["data"]["snapshot"])
+            self.assertEqual("cube", result["data"]["summary"]["roots"][1])
+            self.assertGreater(result["data"]["snapshot"]["node_count"], 1)
+
+    def test_get_node_reads_file(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _record = self._project_with_snapshot(tmp)
+            result = query_snapshot(project, {"op": "get_node", "id": "cube"})
+            self.assertEqual("ok", result["status"])
+            self.assertEqual([10.0, 20.0, 0.0], result["data"]["node"]["world_position"])
+
+    def test_find_by_type(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _record = self._project_with_snapshot(tmp)
+            result = query_snapshot(project, {"op": "find", "type": "spritec"})
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("sprite", result["data"]["matches"][0]["id"])
+
+    def test_get_path(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _record = self._project_with_snapshot(tmp)
+            result = query_snapshot(project, {"op": "get_path", "path": "/scene_graph/children/0/world_position"})
+            self.assertEqual("ok", result["status"])
+            self.assertEqual([10.0, 20.0, 0.0], result["data"]["value"])
+
+    def test_inline_full_too_large(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, record = self._project_with_snapshot(tmp)
+            record["padding"] = "x" * (INLINE_BUDGET + 100)
+            result = observe_envelope(
+                {**record, "_path": str(project / ".internal" / "agent" / "snapshots" / f"{record['id']}.json")},
+                inline="full",
+            )
+            self.assertEqual("error", result["status"])
+            self.assertEqual("INLINE_TOO_LARGE", result["error"]["code"])
+            self.assertTrue((project / ".internal" / "agent" / "snapshots" / f"{record['id']}.json").is_file())
+
+    def test_dispatch_query_and_hierarchy(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _record = self._project_with_snapshot(tmp)
+            props = dispatch_command(project, "runtime_get_properties", {"id": "cube"}, 5)
+            self.assertEqual("ok", props["status"])
+            self.assertEqual("runtime", props["data"]["source"])
+            tree = dispatch_command(project, "runtime_get_hierarchy", {}, 5)
+            self.assertEqual("ok", tree["status"])
+            ids = [node["id"] for node in tree["data"]["nodes"]]
+            self.assertIn("cube", ids)
 
 
 if __name__ == "__main__":

@@ -49,3 +49,8 @@ void dmEngineService::InitProfiler(HEngineService engine_service, dmResource::HF
 void dmEngineService::InitState(HEngineService engine_service, EngineState* state)
 {	
 }
+
+bool dmEngineService::WriteSceneGraphJson(dmGameObject::HRegister, const char*)
+{
+    return false;
+}

@@ -291,6 +291,15 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             op = params.get("op")
             if op == "read_text":
                 path = params.get("path")
+                file_path = project_file(project, path)
+                from agent_runtime import is_snapshot_path
+
+                if is_snapshot_path(project, file_path):
+                    return error_envelope(
+                        "NOT_ALLOWED",
+                        "Do not read snapshot files as text.",
+                        "Use runtime_snapshot_query to take a slice.",
+                    )
                 return ok_envelope({"path": sanitize_proj_path(path), "text": _read_text(project, path), "source": "disk"})
             if op == "write_text":
                 path = params.get("path")
@@ -466,6 +475,43 @@ def intercept_existing_http(
     return None
 
 
+RUNTIME_COMMANDS = {
+    "runtime_observe",
+    "runtime_snapshot_query",
+    "runtime_get_hierarchy",
+    "runtime_get_properties",
+    "runtime_state",
+}
+
+
+def handle_runtime_command(
+    project: Path,
+    command: str,
+    params: Dict[str, Any],
+    timeout: float,
+) -> Dict[str, Any]:
+    from agent_runtime import (
+        query_snapshot,
+        runtime_get_hierarchy,
+        runtime_get_properties,
+        runtime_state_payload,
+    )
+
+    if command == "runtime_state":
+        return runtime_state_payload(project)
+    if command == "runtime_snapshot_query":
+        return query_snapshot(project, params)
+    if command == "runtime_get_hierarchy":
+        return runtime_get_hierarchy(project, params)
+    if command == "runtime_get_properties":
+        return runtime_get_properties(project, params)
+    if command == "runtime_observe":
+        from defold_agent import observe_runtime
+
+        return observe_runtime(project, params, timeout)
+    return error_envelope("UNKNOWN_COMMAND", f"Unknown runtime command: {command}")
+
+
 def dispatch_command(
     project: Path,
     command: str,
@@ -473,6 +519,8 @@ def dispatch_command(
     timeout: float,
 ) -> Dict[str, Any]:
     params = params or {}
+    if command in RUNTIME_COMMANDS:
+        return handle_runtime_command(project, command, params, timeout)
     intercepted = intercept_existing_http(project, command, params, timeout)
     if intercepted is not None:
         return intercepted

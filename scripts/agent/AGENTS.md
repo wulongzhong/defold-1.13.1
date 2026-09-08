@@ -1,6 +1,6 @@
 # Defold agent loop
 
-This project is a Defold game. Treat it like a Godot CLI session: edit text files, compile, run, look at a PNG, edit again. Do **not** install an editor plugin. Hierarchy / create-go / script patch are first-party (`defold_agent.py` + editor `/agent/command`), not an addon.
+This project is a Defold game. Treat it like a Godot CLI session: edit text files, compile, run, inspect a **runtime snapshot file**, edit again. Do **not** install an editor plugin. Hierarchy / create-go / script patch are first-party (`defold_agent.py` + editor `/agent/command`), not an addon.
 
 ## Files you write
 
@@ -9,7 +9,7 @@ Defold sources are text:
 - `game.project`
 - `*.collection` — scenes
 - `*.go` — game objects
-- `*.script` / `*.gui_script` / `*.render_script` — Lua
+- `*.script` / `*.gui_script` / `.render_script` — Lua
 - `*.atlas`, `*.tilemap`, `*.particlefx`, `input/*.input_binding`
 
 Keep paths project-relative with a leading slash in Lua (`/main/player.script`).
@@ -21,29 +21,14 @@ From the project root (or this engine repo):
 ```bash
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py doctor
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py check
-python path/to/defold-1.13.1/scripts/agent/defold_agent.py loop --frames 30 --screenshot .internal/agent/shot.png
+python path/to/defold-1.13.1/scripts/agent/defold_agent.py observe --frames 30
+python path/to/defold-1.13.1/scripts/agent/defold_agent.py snapshot-query --op get_node --id cube
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py state
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py hierarchy --collection /main/main.collection
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py create-go --collection /main/main.collection --id cube --position 0,0,0
 ```
 
-Every command prints JSON on stdout:
-
-```json
-{
-  "success": false,
-  "source": "bob",
-  "issues": [
-    {
-      "severity": "error",
-      "resource": "/main/player.script",
-      "line": 12,
-      "range": { "start": { "line": 11, "character": 0 }, "end": { "line": 11, "character": 0 } },
-      "message": "attempt to index a nil value"
-    }
-  ]
-}
-```
+Every command prints JSON on stdout.
 
 `range.line` is 0-based (LSP). `line` is 1-based.
 
@@ -58,25 +43,33 @@ Need tools:
 
 - `DEFOLD_BOB` or `--bob` pointing at `bob.jar`
 - a JDK on `PATH` if bob is a jar
-- `DEFOLD_ENGINE` or `--engine` pointing at `dmengine` for `run` / `loop`
+- `DEFOLD_ENGINE` or `--engine` pointing at `dmengine` for `run` / `observe`
 
-## Run and look (Godot `--path .` + `--write-movie`)
+## Observe (structured runtime, not a screenshot loop)
 
 ```bash
-python .../defold_agent.py run --frames 30 --screenshot .internal/agent/shot.png
+python .../defold_agent.py observe --frames 30
+python .../defold_agent.py snapshot-query --op get_node --id cube
+python .../defold_agent.py snapshot-query --op find --type spritec
 ```
 
-That is:
+`observe` runs:
 
 ```text
-dmengine build/default/game.projectc --quit-after-frames=30 --screenshot=.internal/agent/shot.png
+dmengine build/default/game.projectc --quit-after-frames=30 --runtime-dump=.internal/agent/snapshots/_raw.json
 ```
 
-Then **open the PNG**. Compare it to what you intended. Fix files. `check` again. `loop` again.
+It writes a **full** scene graph to `.internal/agent/snapshots/{id}.json` and returns only a **summary** (handle, roots, type counts, issues). The tree does not go into the chat.
 
-`--debug-collisions` turns on the physics overlay (Godot `--debug-collisions`).
+Then query the file:
 
-If the editor is open, `shot --resource /main/main.collection` uses `GET /preview/{path}` (often faster than launching).
+- `get_node` — one go / component (`world_position`, script properties)
+- `find` / `list_ids` / `get_subtree` — search or a small slice
+- `get_path` — JSON Pointer, e.g. `/scene_graph/children/0/world_position`
+
+Do **not** `filesystem_manage read_text` a snapshot. Do **not** start the loop with a screenshot. Use `runtime_screenshot` / `observe --screenshot` only when you need to judge color, overlap, or layout that numbers cannot answer.
+
+`loop` is check + observe (still no screenshot unless you pass `--screenshot`).
 
 ## Edit the live graph (no plugin)
 
@@ -97,6 +90,8 @@ python .../defold_agent.py mcp
 ```
 
 Do not curl `/agent/command` as the client protocol; use this CLI. Do not add `addons/` or `*.editor_script` for AI.
+
+Authoring tree (`collection_get_hierarchy`) is not the running game. Runtime tree is `runtime_get_hierarchy` / `runtime_snapshot_query` against a snapshot file.
 
 ## Logs you can read without the CLI
 
@@ -120,5 +115,6 @@ Do not use the interactive debugger. Do not curl the editor as your main protoco
 1. `doctor` — confirm bob / dmengine / optional editor.
 2. Write a collection, a go, a script.
 3. `check` until `success` is true.
-4. `loop --screenshot .internal/agent/shot.png`.
-5. Read the PNG and `issues`. Change one thing. Repeat.
+4. `observe --frames 30` — remember `data.snapshot.id`.
+5. `snapshot-query --op get_node --id <go>` (and `find` if needed).
+6. Change one thing. Repeat.

@@ -8,7 +8,7 @@
 """
 Defold first-party agent CLI.
 
-Path A: write files -> bob/dmengine -> JSON diagnostics / PNG.
+Path A: write files -> bob/dmengine -> JSON diagnostics / runtime snapshot file.
 Path B features (hierarchy, create-go, script patch, ...) are the same CLI
 talking to editor source `/agent/command`, not a game plugin.
 """
@@ -30,7 +30,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from agent_mcp import serve_stdio
-from agent_ops import dispatch_command, read_editor_endpoint as ops_read_editor_endpoint
+from agent_ops import (
+    dispatch_command,
+    error_envelope,
+    read_editor_endpoint as ops_read_editor_endpoint,
+)
+from agent_runtime import observe_envelope, wrap_engine_dump, write_engine_json
 
 
 ISSUE_KEYS = ("severity", "resource", "line", "message")
@@ -437,6 +442,7 @@ def run_engine(
     screenshot: Optional[Path],
     debug_collisions: bool,
     extra: Sequence[str],
+    runtime_dump: Optional[Path] = None,
 ) -> Dict[str, Any]:
     projectc = project / "build" / "default" / "game.projectc"
     args = [str(engine)]
@@ -444,6 +450,9 @@ def run_engine(
         args.append(str(projectc))
     if frames > 0:
         args.append(f"--quit-after-frames={frames}")
+    if runtime_dump:
+        runtime_dump.parent.mkdir(parents=True, exist_ok=True)
+        args.append(f"--runtime-dump={runtime_dump}")
     if screenshot:
         screenshot.parent.mkdir(parents=True, exist_ok=True)
         args.append(f"--screenshot={screenshot}")
@@ -459,10 +468,18 @@ def run_engine(
         "command": args,
         "issues": parse_log(log),
         "log": log,
+        "frame": frames if frames > 0 else None,
     }
+    engine_info = write_engine_json(project, log)
+    if engine_info:
+        payload["engine"] = engine_info
+    if runtime_dump and runtime_dump.is_file():
+        payload["runtime_dump"] = str(runtime_dump)
+    elif runtime_dump:
+        payload["success"] = False
+        payload["issues"].append(_issue("error", f"Runtime dump was not written: {runtime_dump}"))
     if screenshot and screenshot.is_file():
         payload["screenshot"] = str(screenshot)
-        payload["success"] = payload["success"] and True
     elif screenshot:
         payload["success"] = False
         payload["issues"].append(_issue("error", f"Screenshot was not written: {screenshot}"))
@@ -510,11 +527,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         "editor": {"url": editor[0]} if editor else None,
         "hints": {
             "check": "defold_agent.py check --project <dir>",
-            "run": "defold_agent.py run --frames 30 --screenshot .internal/agent/shot.png",
+            "run": "defold_agent.py run --frames 30 --runtime-dump .internal/agent/snapshots/raw.json",
+            "observe": "defold_agent.py observe --frames 30",
             "command": "defold_agent.py command editor_state",
             "mcp": "defold_agent.py mcp   # stdio MCP, no game plugin",
             "engine_flags": [
                 "--quit-after-frames=N",
+                "--runtime-dump=path.json",
                 "--screenshot=path.png",
                 "--debug-collisions",
             ],
@@ -552,6 +571,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     screenshot = Path(args.screenshot) if args.screenshot else None
     if screenshot and not screenshot.is_absolute():
         screenshot = project / screenshot
+    runtime_dump = Path(args.runtime_dump) if getattr(args, "runtime_dump", None) else None
+    if runtime_dump and not runtime_dump.is_absolute():
+        runtime_dump = project / runtime_dump
     payload = run_engine(
         project,
         engine,
@@ -559,9 +581,113 @@ def cmd_run(args: argparse.Namespace) -> int:
         screenshot=screenshot,
         debug_collisions=args.debug_collisions,
         extra=args.engine_arg or [],
+        runtime_dump=runtime_dump,
     )
     dump_json(payload, Path(args.out) if args.out else None)
     return 0 if payload.get("success") else 1
+
+
+def observe_runtime(project: Path, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    inline = params.get("inline") or "summary"
+    if inline not in {"summary", "preview", "full"}:
+        return error_envelope("INVALID_PARAM", "inline must be summary, preview, or full")
+    include = params.get("include") or []
+    if isinstance(include, str):
+        include = [include]
+    want_shot = "screenshot" in include
+    frames = int(params.get("frames") if params.get("frames") is not None else 30)
+    bob = find_bob(params.get("bob"), project)
+    engine = find_engine(params.get("engine"), project)
+    if not params.get("no_build"):
+        build_payload = check_project(project, bob, prefer_editor=False, timeout=timeout)
+        if not build_payload.get("success"):
+            return error_envelope(
+                "HANDLER_ERROR",
+                "check failed before observe",
+                issues=build_payload.get("issues") or [],
+            )
+    if not engine:
+        return error_envelope("ENGINE_UNREACHABLE", "dmengine not found. Set DEFOLD_ENGINE or pass --engine.")
+    raw = project / ".internal" / "agent" / "snapshots" / "_raw.json"
+    shot = None
+    if want_shot:
+        dest = params.get("dest")
+        shot = Path(dest) if dest else project / ".internal" / "agent" / "snapshots" / "_shot.png"
+        if not shot.is_absolute():
+            shot = project / shot
+    run_payload = run_engine(
+        project,
+        engine,
+        frames=frames,
+        screenshot=shot,
+        debug_collisions=bool(params.get("debug_collisions")),
+        extra=params.get("engine_arg") or [],
+        runtime_dump=raw,
+    )
+    if not raw.is_file():
+        return error_envelope(
+            "RUNTIME_DUMP_MISSING",
+            "Runtime dump was not written. Rebuild dmengine with --runtime-dump support.",
+            issues=run_payload.get("issues") or [],
+        )
+    record = wrap_engine_dump(
+        project,
+        raw,
+        mode="batch",
+        frame=frames if frames > 0 else None,
+        target=run_payload.get("engine"),
+        issues=run_payload.get("issues") or [],
+        screenshot=shot if shot and shot.is_file() else None,
+    )
+    log_lines = [line for line in (run_payload.get("log") or "").splitlines() if line]
+    return observe_envelope(
+        {**record, "_path": str(project / ".internal" / "agent" / "snapshots" / f"{record['id']}.json")},
+        inline=inline,
+        log_lines=log_lines,
+        alive=False,
+    )
+
+
+def cmd_observe(args: argparse.Namespace) -> int:
+    project = find_project(Path(args.project) if args.project else None)
+    include = []
+    if args.screenshot:
+        include.append("screenshot")
+    result = observe_runtime(
+        project,
+        {
+            "frames": args.frames,
+            "inline": args.inline,
+            "include": include,
+            "dest": args.screenshot,
+            "no_build": args.no_build,
+            "debug_collisions": args.debug_collisions,
+            "engine": args.engine,
+            "bob": args.bob,
+            "engine_arg": args.engine_arg or [],
+        },
+        args.timeout,
+    )
+    return _dump_command(result, args.out)
+
+
+def cmd_snapshot_query(args: argparse.Namespace) -> int:
+    project = find_project(Path(args.project) if args.project else None)
+    params: Dict[str, Any] = {"op": args.op, "snapshot": args.snapshot}
+    if args.id:
+        params["id"] = args.id
+    if args.component:
+        params["component"] = args.component
+    if args.path:
+        params["path"] = args.path
+    if args.type:
+        params["type"] = args.type
+    if args.id_glob:
+        params["id_glob"] = args.id_glob
+    if args.limit is not None:
+        params["limit"] = args.limit
+    result = dispatch_command(project, "runtime_snapshot_query", params, args.timeout)
+    return _dump_command(result, args.out)
 
 
 def cmd_shot(args: argparse.Namespace) -> int:
@@ -585,9 +711,10 @@ def cmd_loop(args: argparse.Namespace) -> int:
     if not check_payload.get("success"):
         dump_json(check_payload, Path(args.out) if args.out else None)
         return 1
-    projectc = project / "build" / "default" / "game.projectc"
-    args.no_build = projectc.is_file()
-    return cmd_run(args)
+    args.no_build = True
+    if not hasattr(args, "inline"):
+        args.inline = "summary"
+    return cmd_observe(args)
 
 
 def cmd_parse_log(args: argparse.Namespace) -> int:
@@ -712,7 +839,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--out", help="Write JSON result to this file as well as stdout.")
     common.add_argument("--timeout", type=float, default=180.0, help="Editor HTTP timeout in seconds.")
     parser = argparse.ArgumentParser(
-        description="Defold agent CLI: check / run / screenshot / editor graph commands."
+        description="Defold agent CLI: check / run / observe / editor graph commands."
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -726,7 +853,8 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", parents=[common], help="Build (unless --no-build) and run dmengine.")
     run.add_argument("--no-build", action="store_true")
     run.add_argument("--frames", type=int, default=30, help="--quit-after-frames. 0 keeps the window open.")
-    run.add_argument("--screenshot", help="PNG path written by dmengine --screenshot.")
+    run.add_argument("--runtime-dump", help="JSON path written by dmengine --runtime-dump.")
+    run.add_argument("--screenshot", help="Optional PNG path written by dmengine --screenshot.")
     run.add_argument("--debug-collisions", action="store_true")
     run.add_argument("--engine-arg", action="append", help="Extra dmengine argument. Repeatable.")
     run.set_defaults(func=cmd_run)
@@ -742,11 +870,32 @@ def build_parser() -> argparse.ArgumentParser:
     shot.add_argument("--engine-arg", action="append")
     shot.set_defaults(func=cmd_shot)
 
-    loop = sub.add_parser("loop", parents=[common], help="check, then run with a screenshot (the agent iteration).")
+    observe = sub.add_parser("observe", parents=[common], help="Batch-run, write a snapshot file, return a summary.")
+    observe.add_argument("--no-build", action="store_true")
+    observe.add_argument("--frames", type=int, default=30)
+    observe.add_argument("--inline", choices=("summary", "preview", "full"), default="summary")
+    observe.add_argument("--screenshot", help="Optional. Only capture a PNG if this path is set.")
+    observe.add_argument("--debug-collisions", action="store_true")
+    observe.add_argument("--engine-arg", action="append")
+    observe.set_defaults(func=cmd_observe)
+
+    snapshot_query = sub.add_parser("snapshot-query", parents=[common], help="Read a slice from a snapshot file.")
+    snapshot_query.add_argument("--op", default="summary", choices=("list", "summary", "list_ids", "get_node", "get_subtree", "find", "get_path"))
+    snapshot_query.add_argument("--snapshot", default="latest")
+    snapshot_query.add_argument("--id")
+    snapshot_query.add_argument("--component")
+    snapshot_query.add_argument("--path", help="JSON Pointer for get_path.")
+    snapshot_query.add_argument("--type")
+    snapshot_query.add_argument("--id-glob")
+    snapshot_query.add_argument("--limit", type=int)
+    snapshot_query.set_defaults(func=cmd_snapshot_query)
+
+    loop = sub.add_parser("loop", parents=[common], help="check, then observe (snapshot file + summary).")
     loop.add_argument("--editor", action="store_true")
     loop.add_argument("--no-build", action="store_true")
     loop.add_argument("--frames", type=int, default=30)
-    loop.add_argument("--screenshot", default=".internal/agent/shot.png")
+    loop.add_argument("--inline", choices=("summary", "preview", "full"), default="summary")
+    loop.add_argument("--screenshot", help="Optional PNG. Observe does not capture a screenshot by default.")
     loop.add_argument("--debug-collisions", action="store_true")
     loop.add_argument("--engine-arg", action="append")
     loop.set_defaults(func=cmd_loop)

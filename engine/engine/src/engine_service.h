@@ -51,6 +51,9 @@ namespace dmEngineService
 
     void InitProfiler(HEngineService engine_service, dmResource::HFactory factory, dmGameObject::HRegister regist);
 
+    // Write the live scene graph as JSON (same payload as GET /scene_graph).
+    bool WriteSceneGraphJson(dmGameObject::HRegister regist, const char* path);
+
     struct ResourceHandlerParams
     {
         dmResource::HFactory      m_Factory;

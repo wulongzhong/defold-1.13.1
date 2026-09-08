@@ -13,6 +13,7 @@
 // specific language governing permissions and limitations under the License.
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <float.h>
 #include <dlib/webserver.h>
@@ -699,34 +700,46 @@ namespace dmEngineService
         OutputResourceSceneGraph(&root, 0, &counter, request);
     }
 
-    static void SendIndent(dmWebServer::Request* request, int indent)
+    typedef void (*JsonWriteFn)(void* ctx, const char* text);
+
+    static void HttpJsonWrite(void* ctx, const char* text)
     {
-        const char buf[4] = {' ', ' ', ' ', ' '};
-        for (int i = 0; i < indent; ++i)
-            dmWebServer::Send(request, buf, sizeof(buf));
+        SendText((dmWebServer::Request*)ctx, text);
     }
 
-    static void SendJsonEscapedText(dmWebServer::Request* request, const char* text)
+    static void FileJsonWrite(void* ctx, const char* text)
     {
-        SendText(request, "\"");
+        fputs(text, (FILE*)ctx);
+    }
+
+    static void WriteIndent(JsonWriteFn write, void* ctx, int indent)
+    {
+        const char buf[5] = {' ', ' ', ' ', ' ', 0};
+        for (int i = 0; i < indent; ++i)
+            write(ctx, buf);
+    }
+
+    static void WriteJsonEscapedText(JsonWriteFn write, void* ctx, const char* text)
+    {
+        write(ctx, "\"");
         for (const char* p = text; *p; ++p)
         {
             switch (*p)
             {
-                case '\"': SendText(request, "\\\""); break;
-                case '\\': SendText(request, "\\\\"); break;
-                case '\n': SendText(request, "\\n"); break;
-                case '\r': SendText(request, "\\r"); break;
-                case '\t': SendText(request, "\\t"); break;
+                case '\"': write(ctx, "\\\""); break;
+                case '\\': write(ctx, "\\\\"); break;
+                case '\n': write(ctx, "\\n"); break;
+                case '\r': write(ctx, "\\r"); break;
+                case '\t': write(ctx, "\\t"); break;
                 default:
                 {
                     char buf[2] = {*p, 0};
-                    SendText(request, buf);
+                    write(ctx, buf);
                     break;
                 }
             }
         }
-        SendText(request, "\"");
+        write(ctx, "\"");
     }
 
     static float JsonSafeFloat(float f)
@@ -734,12 +747,12 @@ namespace dmEngineService
         return isfinite(f) ? f : FLT_MAX;
     }
 
-    static void OutputJsonProperty(dmGameObject::SceneNodeProperty* property, dmWebServer::Request* request, int indent)
+    static void OutputJsonProperty(dmGameObject::SceneNodeProperty* property, JsonWriteFn write, void* ctx, int indent)
     {
-        SendIndent(request, indent);
-        SendText(request, "\"");
-        SendText(request, dmHashReverseSafe64(property->m_NameHash));
-        SendText(request, "\": ");
+        WriteIndent(write, ctx, indent);
+        write(ctx, "\"");
+        write(ctx, dmHashReverseSafe64(property->m_NameHash));
+        write(ctx, "\": ");
 
         char buffer[512];
         buffer[0] = 0;
@@ -770,54 +783,54 @@ namespace dmEngineService
             JsonSafeFloat(property->m_Value.m_V4[3]));
             break;
         case dmGameObject::SCENE_NODE_PROPERTY_TYPE_URL: dmSnPrintf(buffer, sizeof(buffer), "\"%s\"", property->m_Value.m_URL); break;
-        case dmGameObject::SCENE_NODE_PROPERTY_TYPE_TEXT: SendJsonEscapedText(request, property->m_Value.m_Text); break;
+        case dmGameObject::SCENE_NODE_PROPERTY_TYPE_TEXT: WriteJsonEscapedText(write, ctx, property->m_Value.m_Text); break;
         default: break;
         }
 
         if (buffer[0] != 0)
         {
-            SendText(request, buffer);
+            write(ctx, buffer);
         }
     }
 
-    static void OutputJsonSceneGraph(dmGameObject::SceneNode* node, dmWebServer::Request* request, int indent)
+    static void OutputJsonSceneGraph(dmGameObject::SceneNode* node, JsonWriteFn write, void* ctx, int indent)
     {
-        SendIndent(request, indent);
-        SendText(request, "{\n");
+        WriteIndent(write, ctx, indent);
+        write(ctx, "{\n");
 
         bool first_property = true;
         dmGameObject::SceneNodePropertyIterator pit = TraverseIterateProperties(node);
         while(dmGameObject::TraverseIteratePropertiesNext(&pit))
         {
             if (!first_property)
-                SendText(request, ",\n");
+                write(ctx, ",\n");
             first_property = false;
 
-            OutputJsonProperty( &pit.m_Property, request, indent+1 );
+            OutputJsonProperty( &pit.m_Property, write, ctx, indent+1 );
         }
 
         if (!first_property)
-            SendText(request, ",\n");
+            write(ctx, ",\n");
 
-        SendIndent(request, indent+1);
-        SendText(request, "\"children\": [");
+        WriteIndent(write, ctx, indent+1);
+        write(ctx, "\"children\": [");
 
         bool first_object = true;
         dmGameObject::SceneNodeIterator it = dmGameObject::TraverseIterateChildren(node);
         while(dmGameObject::TraverseIterateNext(&it))
         {
             if (!first_object)
-                SendText(request, ",\n");
+                write(ctx, ",\n");
             else
-                SendText(request, "\n");
+                write(ctx, "\n");
             first_object = false;
 
-            OutputJsonSceneGraph( &it.m_Node, request, indent+1 );
+            OutputJsonSceneGraph( &it.m_Node, write, ctx, indent+1 );
         }
-        SendText(request, "]\n");
+        write(ctx, "]\n");
 
-        SendIndent(request, indent);
-        SendText(request, "}");
+        WriteIndent(write, ctx, indent);
+        write(ctx, "}");
     }
 
     static void HttpSceneGraphRequestCallback(void* context, dmWebServer::Request* request)
@@ -844,7 +857,34 @@ namespace dmEngineService
         dmWebServer::SendAttribute(request, "Access-Control-Allow-Origin", "*");
         dmWebServer::SendAttribute(request, "Cache-Control", "no-store");
 
-        OutputJsonSceneGraph(&root, request, 0);
+        OutputJsonSceneGraph(&root, HttpJsonWrite, request, 0);
+    }
+
+    bool WriteSceneGraphJson(dmGameObject::HRegister regist, const char* path)
+    {
+        if (!regist || !path || !path[0])
+        {
+            return false;
+        }
+
+        dmGameObject::SceneNode root;
+        if (!dmGameObject::TraverseGetRoot(regist, &root))
+        {
+            dmLogError("Failed to get root node for runtime dump");
+            return false;
+        }
+
+        FILE* file = fopen(path, "wb");
+        if (!file)
+        {
+            dmLogError("Failed to open runtime dump '%s'", path);
+            return false;
+        }
+
+        OutputJsonSceneGraph(&root, FileJsonWrite, file, 0);
+        bool ok = ferror(file) == 0;
+        fclose(file);
+        return ok;
     }
 
 #undef CHECK_RESULT_BOOL

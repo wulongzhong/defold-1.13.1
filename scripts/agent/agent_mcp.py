@@ -20,8 +20,8 @@ PROTOCOL_VERSION = "2024-11-05"
 
 TOOLS = [
     ("editor_state", "Open editor or disk snapshot: version, title, current resource, readiness."),
-    ("collection_get_hierarchy", "Collection tree. params: path."),
-    ("gameobject_get_properties", "GO or component properties. params: collection, id, optional component."),
+    ("collection_get_hierarchy", "Authoring collection tree. params: path."),
+    ("gameobject_get_properties", "Authoring GO or component properties. params: collection, id, optional component."),
     ("session_activate", "Single local session. No-op success when the editor is closed."),
     ("collection_open", "Resolve and open a collection in the editor."),
     ("collection_save", "Write the collection save data to disk."),
@@ -31,29 +31,96 @@ TOOLS = [
     ("script_attach", "Attach a .script to a game object."),
     ("script_patch", "Replace a unique old_text with new_text."),
     ("project_build", "Prefer defold_agent.py check. Editor uses POST /command/check."),
-    ("logs_read", "Read GET /console when the editor is open."),
-    ("editor_preview", "Render GET /preview/{path} to a PNG."),
+    ("logs_read", "Read GET /console when the editor is open, or the last engine log."),
+    ("editor_preview", "Authoring preview PNG via GET /preview/{path}. Not a runtime screenshot."),
     ("batch_execute", "Run commands[] sequentially. Each step is its own undo."),
     ("collection_manage", "op: create | add_instance | remove_instance | get_roots"),
     ("gameobject_manage", "op: delete | rename | set_property | find"),
     ("component_manage", "op: remove | set_property"),
     ("script_manage", "op: read | detach"),
-    ("filesystem_manage", "op: read_text | write_text | search"),
+    ("filesystem_manage", "op: read_text | write_text | search. Do not read snapshot JSON."),
     ("project_manage", "op: settings_get | settings_set | stop"),
     ("editor_manage", "op: state | selection_get | quit"),
     ("session_manage", "op: list"),
     ("api_manage", "op: get — forwards GET /ref?q="),
+    ("runtime_observe", "Batch-run the game, write a full scene_graph snapshot file, return a summary. Default does not screenshot."),
+    ("runtime_snapshot_query", "Read a precise slice from a snapshot file. Engine may already be dead."),
+    ("runtime_get_hierarchy", "Runtime tree from the latest snapshot file (not the authoring collection)."),
+    ("runtime_get_properties", "One runtime GO/component from the latest snapshot file."),
+    ("runtime_state", "Latest snapshot handle and last known engine service url."),
 ]
+
+TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    "runtime_observe": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "frames": {"type": "integer", "default": 30},
+            "inline": {"type": "string", "enum": ["summary", "preview", "full"], "default": "summary"},
+            "include": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["screenshot"]},
+                "description": "Optional extras. Screenshot is not default.",
+            },
+            "dest": {"type": "string", "description": "Optional PNG path when include contains screenshot."},
+            "no_build": {"type": "boolean", "default": False},
+            "debug_collisions": {"type": "boolean", "default": False},
+        },
+    },
+    "runtime_snapshot_query": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "op": {
+                "type": "string",
+                "enum": ["list", "summary", "list_ids", "get_node", "get_subtree", "find", "get_path"],
+                "default": "summary",
+            },
+            "snapshot": {"type": "string", "default": "latest", "description": "latest, snapshot id, or path."},
+            "id": {"type": "string"},
+            "component": {"type": "string"},
+            "path": {"type": "string", "description": "JSON Pointer for get_path, e.g. /scene_graph/children/0/id."},
+            "type": {"type": "string"},
+            "id_glob": {"type": "string"},
+            "has_property": {"type": "string"},
+            "depth": {"type": "integer"},
+            "limit": {"type": "integer"},
+            "offset": {"type": "integer"},
+        },
+    },
+    "runtime_get_hierarchy": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "snapshot": {"type": "string", "default": "latest"},
+            "id": {"type": "string"},
+            "depth": {"type": "integer", "default": 8},
+            "offset": {"type": "integer", "default": 0},
+            "limit": {"type": "integer", "default": 200},
+        },
+    },
+    "runtime_get_properties": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["id"],
+        "properties": {
+            "id": {"type": "string"},
+            "component": {"type": "string"},
+            "snapshot": {"type": "string", "default": "latest"},
+        },
+    },
+    "runtime_state": {"type": "object", "additionalProperties": False, "properties": {}},
+}
 
 
 def _tool_schema(name: str, description: str) -> Dict[str, Any]:
     return {
         "name": name,
         "description": description,
-        "inputSchema": {
-            "type": "object",
-            "additionalProperties": True,
-        },
+        "inputSchema": TOOL_SCHEMAS.get(
+            name,
+            {"type": "object", "additionalProperties": True},
+        ),
     }
 
 
