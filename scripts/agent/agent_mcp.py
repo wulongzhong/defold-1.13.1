@@ -11,12 +11,20 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, unquote, urlparse
 
 from agent_ops import dispatch_command
 
 
-PROTOCOL_VERSION = "2024-11-05"
+PROTOCOL_VERSIONS = ("2025-03-26", "2024-11-05")
+PROTOCOL_VERSION = PROTOCOL_VERSIONS[0]
+INSTRUCTIONS = (
+    "First-party Defold stdio MCP. Use tools and defold:// resources. "
+    "Observe with runtime_observe then runtime_snapshot_query. "
+    "Do not read snapshot JSON via filesystem_manage. "
+    "Do not configure an HTTP MCP URL."
+)
 
 TOOLS = [
     ("editor_state", "Open editor or disk snapshot: version, title, current resource, readiness."),
@@ -523,6 +531,90 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 }
 
 
+RESOURCE_TEMPLATES = [
+    {
+        "uriTemplate": "defold://sessions",
+        "name": "sessions",
+        "description": "Connected editor / CLI sessions.",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://editor/state",
+        "name": "editor-state",
+        "description": "Authoring editor or disk snapshot.",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://collection/current",
+        "name": "current-collection",
+        "description": "Active or bootstrap collection path.",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://collection/hierarchy{?path}",
+        "name": "collection-hierarchy",
+        "description": "Authoring collection tree. Query path=/main/main.collection",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://gameobject/{id}/properties{?collection}",
+        "name": "gameobject-properties",
+        "description": "Authoring GO properties.",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://script/{+path}",
+        "name": "script",
+        "description": "Lua script text. Path is project-relative without a leading defold host.",
+        "mimeType": "text/plain",
+    },
+    {
+        "uriTemplate": "defold://project/info",
+        "name": "project-info",
+        "description": "Doctor + game.project readiness.",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://ref/{query}",
+        "name": "api-ref",
+        "description": "Lua/API reference search.",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://runtime/snapshot/{id}",
+        "name": "runtime-snapshot",
+        "description": "Snapshot handle. Prefer runtime_snapshot_query over raw JSON.",
+        "mimeType": "application/json",
+    },
+]
+
+PROMPTS = [
+    {
+        "name": "defold-doctor",
+        "description": "Check bob, dmengine, editor, and project readiness.",
+        "arguments": [],
+    },
+    {
+        "name": "defold-observe",
+        "description": "Batch or live observe, then query a node.",
+        "arguments": [
+            {"name": "id", "description": "Game object id to query after observe.", "required": False},
+            {"name": "frames", "description": "Batch frame count if no live engine.", "required": False},
+        ],
+    },
+    {
+        "name": "defold-live",
+        "description": "Start a live engine, observe via control files, stop.",
+        "arguments": [{"name": "id", "description": "Game object id.", "required": False}],
+    },
+    {
+        "name": "defold-loop",
+        "description": "check then observe. No screenshot unless asked.",
+        "arguments": [{"name": "frames", "required": False}],
+    },
+]
+
+
 def _tool_schema(name: str, description: str) -> Dict[str, Any]:
     schema = TOOL_SCHEMAS.get(name)
     if schema is None:
@@ -532,6 +624,183 @@ def _tool_schema(name: str, description: str) -> Dict[str, Any]:
         "description": description,
         "inputSchema": schema,
     }
+
+
+def _json_resource(uri: str, payload: Any) -> Dict[str, Any]:
+    return {
+        "contents": [
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": json.dumps(payload, ensure_ascii=False),
+            }
+        ]
+    }
+
+
+def list_mcp_resources(project: Path) -> List[Dict[str, Any]]:
+    from agent_runtime import list_snapshot_records
+
+    resources = [
+        {
+            "uri": "defold://sessions",
+            "name": "sessions",
+            "mimeType": "application/json",
+            "description": "Editor / CLI sessions.",
+        },
+        {
+            "uri": "defold://editor/state",
+            "name": "editor-state",
+            "mimeType": "application/json",
+            "description": "Authoring state.",
+        },
+        {
+            "uri": "defold://collection/current",
+            "name": "current-collection",
+            "mimeType": "application/json",
+            "description": "Active or bootstrap collection.",
+        },
+        {
+            "uri": "defold://project/info",
+            "name": "project-info",
+            "mimeType": "application/json",
+            "description": "Doctor and game.project.",
+        },
+    ]
+    for path in sorted(project.rglob("*.collection")):
+        if any(part in {".internal", "build", ".git", ".editor"} for part in path.parts):
+            continue
+        rel = "/" + path.relative_to(project).as_posix()
+        resources.append(
+            {
+                "uri": f"defold://collection/hierarchy?path={rel}",
+                "name": rel,
+                "mimeType": "application/json",
+                "description": "Authoring hierarchy for this collection.",
+            }
+        )
+        if len(resources) >= 28:
+            break
+    for record in list_snapshot_records(project):
+        resources.append(
+            {
+                "uri": f"defold://runtime/snapshot/{record['id']}",
+                "name": record["id"],
+                "mimeType": "application/json",
+                "description": "Snapshot handle. Use runtime_snapshot_query; do not read_text the JSON.",
+            }
+        )
+    return resources
+
+
+def _uri_parts(uri: str) -> Tuple[str, List[str], Dict[str, str]]:
+    parsed = urlparse(uri)
+    query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
+    host = unquote(parsed.netloc or "")
+    path = unquote(parsed.path or "").strip("/")
+    segments = [part for part in ([host] if host else []) + (path.split("/") if path else []) if part]
+    return host, segments, query
+
+
+def read_mcp_resource(project: Path, uri: str, timeout: float) -> Dict[str, Any]:
+    from agent_runtime import query_snapshot
+
+    if not uri.startswith("defold://"):
+        raise ValueError("URI must start with defold://")
+    _host, segments, query = _uri_parts(uri)
+    if uri.startswith("defold://runtime/snapshot/") or (segments[:2] == ["runtime", "snapshot"] and len(segments) >= 3):
+        snap_id = uri.split("defold://runtime/snapshot/", 1)[-1]
+        return query_snapshot(project, {"op": "summary", "snapshot": snap_id})
+    if segments[:1] == ["sessions"] or uri.rstrip("/") == "defold://sessions":
+        return dispatch_command(project, "session_manage", {"op": "list"}, timeout)
+    if segments[:2] == ["editor", "state"] or uri.rstrip("/") == "defold://editor/state":
+        return dispatch_command(project, "editor_state", {}, timeout)
+    if segments[:2] == ["collection", "current"]:
+        state = dispatch_command(project, "editor_state", {}, timeout)
+        data = state.get("data") or {}
+        return {
+            "status": state.get("status"),
+            "readiness": state.get("readiness"),
+            "data": {
+                "path": data.get("active_resource") or data.get("main_collection"),
+                "main_collection": data.get("main_collection"),
+                "active_resource": data.get("active_resource"),
+                "source": data.get("source"),
+            },
+        }
+    if segments[:2] == ["collection", "hierarchy"]:
+        path = query.get("path") or query.get("collection")
+        if not path and len(segments) > 2:
+            path = "/" + "/".join(segments[2:])
+        return dispatch_command(project, "collection_get_hierarchy", {"path": path}, timeout)
+    if segments[:1] == ["gameobject"] and "properties" in segments:
+        go_id = query.get("id") or (segments[1] if len(segments) > 1 and segments[1] != "properties" else None)
+        collection = query.get("collection") or query.get("path")
+        return dispatch_command(
+            project,
+            "gameobject_get_properties",
+            {"id": go_id, "collection": collection, "path": collection},
+            timeout,
+        )
+    if segments[:1] == ["script"]:
+        path = query.get("path")
+        if not path:
+            path = "/" + "/".join(segments[1:])
+        if not path.startswith("/"):
+            path = "/" + path
+        return dispatch_command(project, "script_manage", {"op": "read", "path": path}, timeout)
+    if segments[:2] == ["project", "info"] or uri.rstrip("/") == "defold://project/info":
+        return dispatch_command(project, "project_doctor", {}, timeout)
+    if segments[:1] == ["ref"]:
+        q = query.get("q") or query.get("query") or "/".join(segments[1:])
+        return dispatch_command(project, "api_manage", {"op": "get", "q": q}, timeout)
+    raise ValueError(f"Unknown resource: {uri}")
+
+
+def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    go_id = arguments.get("id") or "cube"
+    frames = arguments.get("frames") or "30"
+    texts = {
+        "defold-doctor": "Call project_doctor. Report bob, dmengine, editor, and game.project readiness. Do not use an HTTP MCP URL.",
+        "defold-observe": (
+            f"Call runtime_observe (inline=summary, no screenshot). Then runtime_snapshot_query op=get_node id={go_id}. "
+            f"If no live engine, batch frames={frames}. Do not read the snapshot file as text."
+        ),
+        "defold-live": (
+            f"Call project_run mode=live, then runtime_observe, then runtime_snapshot_query op=get_node id={go_id}, "
+            "then project_stop. Observation is file handshake, not HTTP."
+        ),
+        "defold-loop": (
+            f"Call project_check / project_build (check only), then runtime_observe frames={frames}. "
+            "Do not screenshot unless the user asks how it looks."
+        ),
+    }
+    if name not in texts:
+        raise KeyError(name)
+    return {
+        "description": next(item["description"] for item in PROMPTS if item["name"] == name),
+        "messages": [{"role": "user", "content": {"type": "text", "text": texts[name]}}],
+    }
+
+
+def mcp_client_config(agent_py: Path, project: Optional[Path], kind: str) -> str:
+    args = [str(agent_py.resolve()), "mcp"]
+    if project:
+        args.extend(["--project", str(project.resolve())])
+    if kind == "codex":
+        quoted = ", ".join(json.dumps(item) for item in args)
+        return (
+            "[mcp_servers.\"defold-agent\"]\n"
+            "command = \"python\"\n"
+            f"args = [{quoted}]\n"
+            "enabled = true\n"
+            "startup_timeout_sec = 60\n"
+            "tool_timeout_sec = 360\n"
+        )
+    return json.dumps(
+        {"mcpServers": {"defold-agent": {"command": "python", "args": args}}},
+        indent=2,
+    ) + "\n"
 
 
 def write_message(payload: Dict[str, Any]) -> None:
@@ -566,55 +835,46 @@ def handle_rpc(message: Dict[str, Any], project: Path, timeout: float) -> Option
     msg_id = message.get("id")
     params = message.get("params") or {}
     if method == "initialize":
+        requested = params.get("protocolVersion")
+        version = requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSION
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {}, "resources": {}},
+                "protocolVersion": version,
+                "capabilities": {
+                    "tools": {"listChanged": False},
+                    "resources": {"subscribe": False, "listChanged": False},
+                    "prompts": {"listChanged": False},
+                },
                 "serverInfo": {"name": "defold-agent", "version": "1.13.1"},
+                "instructions": INSTRUCTIONS,
             },
         }
-    if method == "notifications/initialized" or method == "initialized":
+    if method == "notifications/initialized" or method == "initialized" or method == "notifications/cancelled":
         return None
     if method == "resources/list":
-        from agent_runtime import list_snapshot_records
-
-        resources = [
-            {
-                "uri": f"defold://runtime/snapshot/{record['id']}",
-                "name": record["id"],
-                "mimeType": "application/json",
-                "description": "Snapshot file handle. Use runtime_snapshot_query; do not read_text the JSON.",
-            }
-            for record in list_snapshot_records(project)
-        ]
-        return {"jsonrpc": "2.0", "id": msg_id, "result": {"resources": resources}}
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"resources": list_mcp_resources(project)}}
+    if method == "resources/templates/list":
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"resourceTemplates": RESOURCE_TEMPLATES}}
     if method == "resources/read":
-        from agent_runtime import query_snapshot
-
         uri = str(params.get("uri") or "")
-        prefix = "defold://runtime/snapshot/"
-        if not uri.startswith(prefix):
-            return {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {"code": -32602, "message": "Unknown resource. Use defold://runtime/snapshot/{id}."},
-            }
-        summary = query_snapshot(project, {"op": "summary", "snapshot": uri[len(prefix) :]})
-        return {
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "result": {
-                "contents": [
-                    {
-                        "uri": uri,
-                        "mimeType": "application/json",
-                        "text": json.dumps(summary, ensure_ascii=False),
-                    }
-                ]
-            },
-        }
+        try:
+            payload = read_mcp_resource(project, uri, timeout)
+        except ValueError as error:
+            return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": str(error)}}
+        return {"jsonrpc": "2.0", "id": msg_id, "result": _json_resource(uri, payload)}
+    if method == "prompts/list":
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"prompts": PROMPTS}}
+    if method == "prompts/get":
+        name = params.get("name")
+        try:
+            result = prompt_messages(str(name), params.get("arguments") or {})
+        except KeyError:
+            return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": f"Unknown prompt: {name}"}}
+        return {"jsonrpc": "2.0", "id": msg_id, "result": result}
+    if method == "logging/setLevel":
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
     if method == "tools/list":
         return {
             "jsonrpc": "2.0",

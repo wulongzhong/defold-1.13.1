@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from agent_mcp import serve_stdio
+from agent_mcp import mcp_client_config, serve_stdio
 from agent_ops import (
     dispatch_command,
     error_envelope,
@@ -986,6 +986,15 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return serve_stdio(project, args.timeout)
 
 
+def cmd_mcp_config(args: argparse.Namespace) -> int:
+    project = Path(args.project).resolve() if args.project else None
+    text = mcp_client_config(Path(__file__), project, args.format)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+    sys.stdout.write(text)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--project", help="Defold project directory (contains game.project).")
@@ -1142,6 +1151,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = sub.add_parser("mcp", parents=[common], help="stdio MCP (Content-Length JSON-RPC). No HTTP MCP.")
     mcp.set_defaults(func=cmd_mcp)
+
+    mcp_config = sub.add_parser("mcp-config", parents=[common], help="Print Cursor/Codex stdio MCP config. Never an HTTP URL.")
+    mcp_config.add_argument("--format", choices=("cursor", "codex"), default="cursor")
+    mcp_config.set_defaults(func=cmd_mcp_config)
     return parser
 
 

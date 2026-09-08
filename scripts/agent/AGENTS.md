@@ -105,11 +105,14 @@ python .../defold_agent.py command collection_manage --params "{\"op\":\"create\
 
 `batch_execute` runs steps in order. It is **not** one undo. Success and failure both set `atomic: false` and `undoable_separately: true`. Prior steps stay applied.
 
-stdio MCP (still this CLI, still no plugin):
+stdio MCP (this CLI, no plugin, no HTTP URL):
 
 ```bash
 python .../defold_agent.py mcp
+python .../defold_agent.py mcp-config --format cursor
 ```
+
+Clients should use `command` + `args`, never `url = "http://..."`. Resources (`defold://editor/state`, `defold://collection/hierarchy?path=...`, `defold://runtime/snapshot/{id}`, …) and prompts (`defold-observe`, `defold-live`) are on the same stdio server.
 
 Do not curl `/agent/command` as the client protocol; use this CLI. Do not add `addons/` or `*.editor_script` for AI.
 

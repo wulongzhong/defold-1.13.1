@@ -467,7 +467,7 @@ editor.save()
 
 `batch_execute.commands[].command` 用 MCP 名（`gameobject_create`）。也认别名 `create_gameobject`。
 
-### 只读 resources（v0 可以后做，但 schema 先留着）
+### 只读 resources（stdio `resources/list` + `resources/read`，不是 HTTP MCP）
 
 ```
 defold://sessions

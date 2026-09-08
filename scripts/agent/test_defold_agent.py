@@ -375,6 +375,53 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("ok", body["status"])
             self.assertNotIn("scene_graph", body.get("data") or {})
 
+    def test_stdio_mcp_resources_and_prompts(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from agent_mcp import handle_rpc, mcp_client_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            init = handle_rpc(
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},
+                project,
+                2,
+            )
+            self.assertIn("prompts", init["result"]["capabilities"])
+            self.assertIn("resources", init["result"]["capabilities"])
+            self.assertIn("stdio", init["result"]["instructions"])
+            listed = handle_rpc({"jsonrpc": "2.0", "id": 2, "method": "resources/list"}, project, 2)
+            uris = [item["uri"] for item in listed["result"]["resources"]]
+            self.assertIn("defold://editor/state", uris)
+            self.assertIn("defold://project/info", uris)
+            self.assertTrue(any(item.startswith("defold://collection/hierarchy") for item in uris))
+            templates = handle_rpc({"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"}, project, 2)
+            names = [item["name"] for item in templates["result"]["resourceTemplates"]]
+            self.assertIn("editor-state", names)
+            state = handle_rpc(
+                {"jsonrpc": "2.0", "id": 4, "method": "resources/read", "params": {"uri": "defold://editor/state"}},
+                project,
+                2,
+            )
+            body = json.loads(state["result"]["contents"][0]["text"])
+            self.assertEqual("ok", body["status"])
+            prompts = handle_rpc({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"}, project, 2)
+            self.assertTrue(any(item["name"] == "defold-observe" for item in prompts["result"]["prompts"]))
+            prompt = handle_rpc(
+                {"jsonrpc": "2.0", "id": 6, "method": "prompts/get", "params": {"name": "defold-observe"}},
+                project,
+                2,
+            )
+            self.assertIn("runtime_observe", prompt["result"]["messages"][0]["content"]["text"])
+            config = mcp_client_config(Path("scripts/agent/defold_agent.py"), project, "cursor")
+            self.assertIn("defold-agent", config)
+            self.assertNotIn("http://", config)
+
 
 class ToolQualityTest(unittest.TestCase):
     def test_closed_mcp_schemas(self):
