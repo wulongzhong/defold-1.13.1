@@ -556,9 +556,20 @@ def parse_collection_hierarchy(text: str, path: str) -> Dict[str, Any]:
         if not ident:
             continue
         proto = instance_prototype(block)
-        item: Dict[str, Any] = {"id": ident, "type": "gameobject", "kind": "referenced" if proto else "embedded"}
-        if proto:
-            item["prototype"] = proto
+        header = block.lstrip().split("{", 1)[0].strip()
+        nested = re.search(r'(?:^|\n)\s*collection:\s*"([^"]+)"', block)
+        if header == "collection_instances":
+            item = {
+                "id": ident,
+                "type": "collection_instance",
+                "kind": "collection_instance",
+            }
+            if nested:
+                item["collection"] = nested.group(1)
+        else:
+            item = {"id": ident, "type": "gameobject", "kind": "referenced" if proto else "embedded"}
+            if proto:
+                item["prototype"] = proto
         children.append(item)
     return {
         "path": path,
@@ -956,9 +967,14 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
         if command == "gameobject_create":
             collection = params.get("collection")
             proto = params.get("path")
+            nested_collection = None
             if proto and str(proto).endswith(".collection"):
-                collection = collection or proto
-                proto = None
+                if collection:
+                    nested_collection = sanitize_proj_path(str(proto))
+                    proto = None
+                else:
+                    collection = proto
+                    proto = None
             elif proto and not str(proto).endswith(".go"):
                 proto = None
             go_id = params.get("id") or "go"
@@ -972,7 +988,19 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             except FileNotFoundError:
                 pass
             x, y, z = (list(position) + [0, 0, 0])[:3]
-            if proto:
+            if nested_collection:
+                block = (
+                    f'\ncollection_instances {{\n'
+                    f'  id: "{go_id}"\n'
+                    f'  collection: "{nested_collection}"\n'
+                    f"  position {{\n"
+                    f"    x: {float(x)}\n"
+                    f"    y: {float(y)}\n"
+                    f"    z: {float(z)}\n"
+                    f"  }}\n"
+                    f"}}\n"
+                )
+            elif proto:
                 proto = sanitize_proj_path(str(proto))
                 block = (
                     f'\ninstances {{\n'
@@ -999,7 +1027,10 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 )
             _write_text(project, collection, text.rstrip() + block, overwrite=True)
             data = {"id": go_id, "undoable": False, "source": "disk"}
-            if proto:
+            if nested_collection:
+                data["kind"] = "collection_instance"
+                data["collection"] = nested_collection
+            elif proto:
                 data["prototype"] = proto
                 data["kind"] = "referenced"
             else:
@@ -1109,6 +1140,7 @@ DISK_COMMANDS = [
     "session_activate",
     "session_manage",
     "sound_manage",
+    "texture_profiles_manage",
     "tilemap_manage",
     "tilesource_manage",
 ]

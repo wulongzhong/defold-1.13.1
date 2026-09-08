@@ -37,6 +37,7 @@ DOMAIN_EXT = {
     "collisionobject_manage": "collisionobject",
     "cubemap_manage": "cubemap",
     "mesh_manage": "mesh",
+    "texture_profiles_manage": "texture_profiles",
 }
 
 FALLBACK_TEMPLATES = {
@@ -131,6 +132,15 @@ FALLBACK_TEMPLATES = {
     ),
     "cubemap": 'right: ""\nleft: ""\ntop: ""\nbottom: ""\nfront: ""\nback: ""\n',
     "mesh": 'material: "/builtins/materials/model_lit.material"\nvertices: ""\n',
+    "texture_profiles": (
+        "path_settings {\n"
+        '  path: "**"\n'
+        '  profile: "Default"\n'
+        "}\n"
+        "profiles {\n"
+        '  name: "Default"\n'
+        "}\n"
+    ),
 }
 
 CAMERA_BLOCK = """
@@ -324,6 +334,9 @@ def summarize(command: str, path: str, text: str) -> Dict[str, Any]:
     elif command == "mesh_manage":
         data["material"] = scalar(text, "material")
         data["vertices"] = scalar(text, "vertices")
+    elif command == "texture_profiles_manage":
+        data["profiles"] = quoted(text, "name")
+        data["paths"] = quoted(text, "path")
     return data
 
 

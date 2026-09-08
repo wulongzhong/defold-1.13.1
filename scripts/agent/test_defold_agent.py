@@ -837,6 +837,10 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", proxy["status"])
             cube_map = dispatch_command(project, "cubemap_manage", {"op": "create", "path": "/main/sky.cubemap"}, 2)
             self.assertEqual("ok", cube_map["status"])
+            textures = dispatch_command(
+                project, "texture_profiles_manage", {"op": "create", "path": "/main/os.texture_profiles"}, 2
+            )
+            self.assertEqual("ok", textures["status"])
 
     def test_logs_read_source_engine(self):
         import tempfile
@@ -880,6 +884,23 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual("referenced", tree["data"]["children"][0]["kind"])
             self.assertEqual("/main/hero.go", tree["data"]["children"][0]["prototype"])
+            (project / "main" / "level.collection").write_text('name: "level"\n', encoding="utf-8")
+            nested = dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "level", "path": "/main/level.collection"},
+                2,
+            )
+            self.assertEqual("ok", nested["status"])
+            self.assertEqual("collection_instance", nested["data"]["kind"])
+            tree = dispatch_command(
+                project,
+                "collection_get_hierarchy",
+                {"path": "/main/main.collection"},
+                2,
+            )
+            kinds = {child["id"]: child["kind"] for child in tree["data"]["children"]}
+            self.assertEqual("collection_instance", kinds["level"])
             state = dispatch_command(project, "editor_manage", {"op": "state"}, 1)
             self.assertEqual("ok", state["status"])
             self.assertIn("ready", state["data"])

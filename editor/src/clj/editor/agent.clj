@@ -83,6 +83,7 @@
    "session_activate"
    "session_manage"
    "sound_manage"
+   "texture_profiles_manage"
    "tilemap_manage"
    "tilesource_manage"])
 
@@ -943,6 +944,9 @@
 (defn- cmd-mesh-manage [ctx params]
   (cmd-file-domain-manage ctx params "mesh"))
 
+(defn- cmd-texture-profiles-manage [ctx params]
+  (cmd-file-domain-manage ctx params "texture_profiles"))
+
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
         component (or (optional-string params :component)
@@ -1028,6 +1032,7 @@
    "session_activate" cmd-session-activate
    "session_manage" cmd-session-manage
    "sound_manage" cmd-sound-manage
+   "texture_profiles_manage" cmd-texture-profiles-manage
    "tilemap_manage" cmd-tilemap-manage
    "tilesource_manage" cmd-tilesource-manage})
 
