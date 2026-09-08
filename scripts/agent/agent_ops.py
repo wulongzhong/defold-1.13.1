@@ -1099,6 +1099,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
 
 
 DISK_COMMANDS = [
+    "appmanifest_manage",
     "atlas_manage",
     "batch_execute",
     "camera_manage",

@@ -848,6 +848,10 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", textures["status"])
             compute = dispatch_command(project, "compute_manage", {"op": "create", "path": "/main/blur.compute"}, 2)
             self.assertEqual("ok", compute["status"])
+            manifest = dispatch_command(
+                project, "appmanifest_manage", {"op": "create", "path": "/main/game.appmanifest"}, 2
+            )
+            self.assertEqual("ok", manifest["status"])
 
     def test_logs_read_source_engine(self):
         import tempfile

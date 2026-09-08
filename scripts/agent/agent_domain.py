@@ -39,6 +39,7 @@ DOMAIN_EXT = {
     "mesh_manage": "mesh",
     "texture_profiles_manage": "texture_profiles",
     "compute_manage": "compute",
+    "appmanifest_manage": "appmanifest",
 }
 
 FALLBACK_TEMPLATES = {
@@ -143,6 +144,7 @@ FALLBACK_TEMPLATES = {
         "}\n"
     ),
     "compute": 'compute_program: ""\n',
+    "appmanifest": "# App manifest\n",
 }
 
 CAMERA_BLOCK = """
@@ -341,6 +343,8 @@ def summarize(command: str, path: str, text: str) -> Dict[str, Any]:
         data["paths"] = quoted(text, "path")
     elif command == "compute_manage":
         data["compute_program"] = scalar(text, "compute_program")
+    elif command == "appmanifest_manage":
+        data["bytes"] = len(text)
     return data
 
 

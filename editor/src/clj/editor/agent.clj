@@ -42,6 +42,7 @@
 
 (def command-names
   ["api_manage"
+   "appmanifest_manage"
    "atlas_manage"
    "batch_execute"
    "camera_manage"
@@ -970,6 +971,9 @@
 (defn- cmd-compute-manage [ctx params]
   (cmd-file-domain-manage ctx params "compute"))
 
+(defn- cmd-appmanifest-manage [ctx params]
+  (cmd-file-domain-manage ctx params "appmanifest"))
+
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
         component (or (optional-string params :component)
@@ -1014,6 +1018,7 @@
 
 (def ^:private command-fns
   {"api_manage" cmd-api-manage
+   "appmanifest_manage" cmd-appmanifest-manage
    "atlas_manage" cmd-atlas-manage
    "batch_execute" cmd-batch-execute
    "camera_manage" cmd-camera-manage
