@@ -49,6 +49,7 @@ TOOLS = [
     ("runtime_get_hierarchy", "Runtime tree from the latest snapshot file (not the authoring collection)."),
     ("runtime_get_properties", "One runtime GO/component from the latest snapshot file."),
     ("runtime_state", "Latest snapshot handle and whether the CLI-owned live engine is alive."),
+    ("runtime_diff", "Compare two snapshot files (default previous vs latest). Not HTTP."),
     ("project_run", "Start dmengine. mode=live keeps it running and dumps via control files, not HTTP."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
@@ -122,6 +123,15 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "runtime_state": {"type": "object", "additionalProperties": False, "properties": {}},
+    "runtime_diff": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "a": {"type": "string", "default": "previous", "description": "Older snapshot id, path, or previous."},
+            "b": {"type": "string", "default": "latest", "description": "Newer snapshot id, path, or latest."},
+            "limit": {"type": "integer", "default": 80},
+        },
+    },
     "project_run": {
         "type": "object",
         "additionalProperties": False,
@@ -417,12 +427,50 @@ def handle_rpc(message: Dict[str, Any], project: Path, timeout: float) -> Option
             "id": msg_id,
             "result": {
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {"tools": {}},
+                "capabilities": {"tools": {}, "resources": {}},
                 "serverInfo": {"name": "defold-agent", "version": "1.13.1"},
             },
         }
     if method == "notifications/initialized" or method == "initialized":
         return None
+    if method == "resources/list":
+        from agent_runtime import list_snapshot_records
+
+        resources = [
+            {
+                "uri": f"defold://runtime/snapshot/{record['id']}",
+                "name": record["id"],
+                "mimeType": "application/json",
+                "description": "Snapshot file handle. Use runtime_snapshot_query; do not read_text the JSON.",
+            }
+            for record in list_snapshot_records(project)
+        ]
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"resources": resources}}
+    if method == "resources/read":
+        from agent_runtime import query_snapshot
+
+        uri = str(params.get("uri") or "")
+        prefix = "defold://runtime/snapshot/"
+        if not uri.startswith(prefix):
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "error": {"code": -32602, "message": "Unknown resource. Use defold://runtime/snapshot/{id}."},
+            }
+        summary = query_snapshot(project, {"op": "summary", "snapshot": uri[len(prefix) :]})
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": json.dumps(summary, ensure_ascii=False),
+                    }
+                ]
+            },
+        }
     if method == "tools/list":
         return {
             "jsonrpc": "2.0",

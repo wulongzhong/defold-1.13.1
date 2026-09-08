@@ -344,6 +344,37 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("ok", result["status"])
             self.assertTrue(result["data"]["stopped"])
 
+    def test_runtime_diff_moved_and_added(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _first = self._project_with_snapshot(tmp)
+            moved = self._graph()
+            moved["children"][0]["world_position"] = [40.0, 20.0, 0.0]
+            moved["children"].append({"id": "newbie", "type": "goc", "world_position": [0.0, 0.0, 0.0], "children": []})
+            raw = Path(tmp) / "raw2.json"
+            raw.write_text(json.dumps(moved), encoding="utf-8")
+            wrap_engine_dump(project, raw, mode="batch", frame=31, target={})
+            result = dispatch_command(project, "runtime_diff", {}, 2)
+            self.assertEqual("ok", result["status"])
+            self.assertIn("newbie", [node["id"] for node in result["data"]["added"]])
+            self.assertIn("cube", [node["id"] for node in result["data"]["moved"]])
+            from agent_mcp import handle_rpc
+
+            listed = handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "resources/list"}, project, 2)
+            uris = [item["uri"] for item in listed["result"]["resources"]]
+            self.assertTrue(any(uri.startswith("defold://runtime/snapshot/") for uri in uris))
+            read = handle_rpc(
+                {"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": uris[0]}},
+                project,
+                2,
+            )
+            body = json.loads(read["result"]["contents"][0]["text"])
+            self.assertEqual("ok", body["status"])
+            self.assertNotIn("scene_graph", body.get("data") or {})
+
 
 class ToolQualityTest(unittest.TestCase):
     def test_closed_mcp_schemas(self):

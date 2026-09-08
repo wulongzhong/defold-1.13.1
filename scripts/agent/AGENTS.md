@@ -23,6 +23,7 @@ python path/to/defold-1.13.1/scripts/agent/defold_agent.py doctor
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py check
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py observe --frames 30
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py snapshot-query --op get_node --id cube
+python path/to/defold-1.13.1/scripts/agent/defold_agent.py snapshot-diff
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py state
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py hierarchy --collection /main/main.collection
 python path/to/defold-1.13.1/scripts/agent/defold_agent.py create-go --collection /main/main.collection --id cube --position 0,0,0
@@ -68,6 +69,8 @@ Then query the file:
 - `get_path` — JSON Pointer, e.g. `/scene_graph/children/0/world_position`
 
 Do **not** `filesystem_manage read_text` a snapshot. Do **not** start the loop with a screenshot. Use `runtime_screenshot` / `observe --screenshot` only when you need to judge color, overlap, or layout that numbers cannot answer.
+
+After two observes, `runtime_diff` / `snapshot-diff` compares the files (default previous vs latest). MCP `resources/list` exposes `defold://runtime/snapshot/{id}` as a handle; `resources/read` returns a summary, not the tree.
 
 `loop` is check + observe (still no screenshot unless you pass `--screenshot`).
 

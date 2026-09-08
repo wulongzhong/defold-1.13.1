@@ -814,3 +814,122 @@ def runtime_get_properties(project: Path, params: Dict[str, Any]) -> Dict[str, A
     merged = dict(params)
     merged["op"] = "get_node"
     return query_snapshot(project, merged)
+
+
+DIFF_SKIP = {
+    "id",
+    "type",
+    "resource",
+    "children",
+    "world_position",
+    "world_rotation",
+    "world_scale",
+}
+
+
+def index_nodes_by_id(graph: Any) -> Dict[str, Dict[str, Any]]:
+    found: Dict[str, Dict[str, Any]] = {}
+    for node in walk_nodes(graph):
+        if isinstance(node, dict) and node_id(node):
+            found[node_id(node)] = node
+    return found
+
+
+def vec_changed(left: Any, right: Any, epsilon: float = 1e-4) -> bool:
+    if left is None and right is None:
+        return False
+    if not isinstance(left, list) or not isinstance(right, list) or len(left) != len(right):
+        return left != right
+    try:
+        return any(abs(float(a) - float(b)) > epsilon for a, b in zip(left, right))
+    except (TypeError, ValueError):
+        return left != right
+
+
+def node_fields(node: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: value for key, value in node.items() if key not in DIFF_SKIP}
+
+
+def resolve_diff_pair(project: Path, params: Dict[str, Any]) -> Tuple[str, str]:
+    right = params.get("b") or params.get("to") or params.get("snapshot") or "latest"
+    left = params.get("a") or params.get("from") or "previous"
+    if left != "previous":
+        return str(left), str(right)
+    records = list_snapshot_records(project)
+    if len(records) < 2:
+        raise FileNotFoundError("previous")
+    if right in {"latest", "", None}:
+        return str(records[1]["id"]), str(records[0]["id"])
+    right_id = str(load_snapshot(project, str(right)).get("id") or right)
+    for record in records:
+        if record.get("id") != right_id:
+            return str(record["id"]), str(right)
+    raise FileNotFoundError("previous")
+
+
+def runtime_diff(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        left_token, right_token = resolve_diff_pair(project, params)
+        left = load_snapshot(project, left_token)
+        right = load_snapshot(project, right_token)
+    except FileNotFoundError as error:
+        return error_envelope(
+            "SNAPSHOT_NOT_FOUND",
+            f"Need two snapshots to diff: {error}",
+            "Call runtime_observe twice, then runtime_diff.",
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        return error_envelope("SNAPSHOT_NOT_FOUND", str(error))
+    left_idx = index_nodes_by_id(scene_graph_of(left))
+    right_idx = index_nodes_by_id(scene_graph_of(right))
+    added: List[Dict[str, Any]] = []
+    removed: List[Dict[str, Any]] = []
+    moved: List[Dict[str, Any]] = []
+    changed: List[Dict[str, Any]] = []
+    for nid, node in right_idx.items():
+        if nid not in left_idx:
+            added.append(shallow_node(node))
+            continue
+        old = left_idx[nid]
+        if vec_changed(old.get("world_position"), node.get("world_position")):
+            moved.append(
+                {
+                    "id": nid,
+                    "type": node_type(node),
+                    "from": old.get("world_position"),
+                    "to": node.get("world_position"),
+                }
+            )
+        if node_type(old) != node_type(node) or old.get("resource") != node.get("resource") or node_fields(old) != node_fields(node):
+            changed.append(
+                {
+                    "id": nid,
+                    "type": node_type(node),
+                    "from": {"type": node_type(old), "resource": old.get("resource"), "fields": node_fields(old)},
+                    "to": {"type": node_type(node), "resource": node.get("resource"), "fields": node_fields(node)},
+                }
+            )
+    for nid, node in left_idx.items():
+        if nid not in right_idx:
+            removed.append(shallow_node(node))
+    limit = min(int(params.get("limit") or PREVIEW_LIMIT), NODE_HARD_CAP)
+    counts = {
+        "added": len(added),
+        "removed": len(removed),
+        "moved": len(moved),
+        "changed": len(changed),
+    }
+    return ok_envelope(
+        {
+            "source": "runtime",
+            "from": {"id": left.get("id"), "path": left.get("_path")},
+            "to": {"id": right.get("id"), "path": right.get("_path")},
+            "added": added[:limit],
+            "removed": removed[:limit],
+            "moved": moved[:limit],
+            "changed": changed[:limit],
+            "counts": counts,
+            "limit": limit,
+            "truncated": any(count > limit for count in counts.values()),
+        }
+    )

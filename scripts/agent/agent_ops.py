@@ -588,6 +588,7 @@ RUNTIME_COMMANDS = {
     "runtime_get_hierarchy",
     "runtime_get_properties",
     "runtime_state",
+    "runtime_diff",
     "project_run",
     "project_stop",
 }
@@ -603,11 +604,14 @@ def handle_runtime_command(
         query_snapshot,
         runtime_get_hierarchy,
         runtime_get_properties,
+        runtime_diff,
         runtime_state_payload,
     )
 
     if command == "runtime_state":
         return runtime_state_payload(project)
+    if command == "runtime_diff":
+        return runtime_diff(project, params)
     if command == "runtime_snapshot_query":
         return query_snapshot(project, params)
     if command == "runtime_get_hierarchy":

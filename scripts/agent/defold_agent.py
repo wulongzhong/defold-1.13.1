@@ -778,6 +778,15 @@ def cmd_snapshot_query(args: argparse.Namespace) -> int:
     return _dump_command(result, args.out)
 
 
+def cmd_runtime_diff(args: argparse.Namespace) -> int:
+    project = find_project(Path(args.project) if args.project else None)
+    params: Dict[str, Any] = {"a": args.a, "b": args.b}
+    if args.limit is not None:
+        params["limit"] = args.limit
+    result = dispatch_command(project, "runtime_diff", params, args.timeout)
+    return _dump_command(result, args.out)
+
+
 def cmd_shot(args: argparse.Namespace) -> int:
     project = find_project(Path(args.project) if args.project else None)
     dest = Path(args.screenshot)
@@ -1000,6 +1009,12 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_query.add_argument("--id-glob")
     snapshot_query.add_argument("--limit", type=int)
     snapshot_query.set_defaults(func=cmd_snapshot_query)
+
+    snapshot_diff = sub.add_parser("snapshot-diff", parents=[common], help="Compare two snapshot files. Default previous vs latest.")
+    snapshot_diff.add_argument("--a", default="previous")
+    snapshot_diff.add_argument("--b", default="latest")
+    snapshot_diff.add_argument("--limit", type=int)
+    snapshot_diff.set_defaults(func=cmd_runtime_diff)
 
     loop = sub.add_parser("loop", parents=[common], help="check, then observe (snapshot file + summary).")
     loop.add_argument("--editor", action="store_true")
