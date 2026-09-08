@@ -931,6 +931,13 @@ class ToolQualityTest(unittest.TestCase):
             self.assertTrue(nested["data"]["nested"])
             self.assertEqual(["cube"], [item["id"] for item in nested["data"]["children"]])
             self.assertEqual("hat", nested["data"]["children"][0]["children"][0]["id"])
+            roots = dispatch_command(
+                project,
+                "collection_manage",
+                {"op": "get_roots", "path": "/main/main.collection"},
+                2,
+            )
+            self.assertEqual(["cube"], [item["id"] for item in roots["data"]["children"]])
             props = dispatch_command(
                 project,
                 "gameobject_get_properties",

@@ -1143,11 +1143,30 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 _write_text(project, path, text, overwrite=True)
                 return ok_envelope({"deleted": True, "id": go_id, "undoable": False, "source": "disk"})
             if op == "get_roots":
-                return disk_command(
+                tree = disk_command(
                     project,
                     "collection_get_hierarchy",
-                    {**params, "limit": params.get("limit") or 50},
+                    {
+                        "path": params.get("path") or params.get("collection"),
+                        "collection": params.get("collection") or params.get("path"),
+                        "offset": 0,
+                        "limit": 10000,
+                    },
                 )
+                if tree.get("status") != "ok":
+                    return tree
+                data = dict(tree.get("data") or {})
+                roots = [item for item in (data.get("children") or []) if not item.get("parent")]
+                offset = max(int(params.get("offset") or 0), 0)
+                limit = max(int(params.get("limit") or 50), 1)
+                sliced = roots[offset : offset + limit]
+                data["children"] = sliced
+                data["total"] = len(roots)
+                data["offset"] = offset
+                data["limit"] = limit
+                data["truncated"] = offset + len(sliced) < len(roots)
+                data["roots"] = True
+                return ok_envelope(data)
             return error_envelope(
                 "UNKNOWN_OP",
                 f"Unknown op: {op}",
