@@ -1,9 +1,6 @@
 name: CI - Engine nightly
 
 on:
-  schedule:
-    # nightly at 03:00
-    - cron: 0 3 * * *
   workflow_dispatch:
     inputs:
       target:

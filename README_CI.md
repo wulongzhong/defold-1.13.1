@@ -2,6 +2,14 @@
 
 CI is based on [GitHub Actions](https://github.com/features/actions). Current and old jobs can be seen on the [Actions page](https://github.com/defold/defold/actions) of the main Defold repository.
 
+## Hosted desktop (Mac Apple Silicon + Windows x64)
+
+Use [hosted-desktop.yml](/.github/workflows/hosted-desktop.yml) on a personal fork. It runs entirely on GitHub-hosted runners (`macos-26` and `windows-2025-vs2026`), uses the runner Xcode / Visual Studio, and uploads `dmengine` plus `bob.jar` as Actions artifacts.
+
+It does **not** need `DM_PACKAGES_URL`, S3, signing certificates, or a machine of your own.
+
+The official [main-ci.yml](/.github/workflows/main-ci.yml) pipeline is for `github.com/defold/defold` and still expects those secrets. It is manual (`workflow_dispatch`) in this tree so a push does not start the full multi-platform job graph.
+
 The Defold CI jobs are divided into three main categories, each represented by a separate GitHub Actions Workflow:
 
 * [Editor Only](/.github/workflows/editor-only.yml) - Builds editor feature branches (branches starting with `DEFEDIT-`)

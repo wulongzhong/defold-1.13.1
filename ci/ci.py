@@ -279,6 +279,14 @@ def build_engine(channel, platform, args):
                     'arm64-android'):
         install_sdk = ''
 
+    # GitHub-hosted Windows already has Visual Studio + Windows SDK.
+    # Official CI still downloads the packaged toolchain when DM_PACKAGES_URL is set.
+    if args.skip_install_sdk:
+        install_sdk = ''
+    elif platform in ('win32', 'x86_64-win32') and not os.environ.get('DM_PACKAGES_URL'):
+        print("DM_PACKAGES_URL is not set; skipping install_sdk and using the runner Visual Studio / Windows SDK")
+        install_sdk = ''
+
     cmd_args = ('"%s" scripts/build.py distclean %s install_ext check_sdk' % (sys.executable, install_sdk)).split()
 
     cmd_opts = []
@@ -511,6 +519,7 @@ def main(argv):
     parser.add_argument("--engine-artifacts", dest="engine_artifacts", default="archived", help="Engine artifacts to include when building the editor")
     parser.add_argument("--channel", dest="channel", help="Override the release channel derived from the branch")
     parser.add_argument("--skip-install-ext", dest="skip_install_ext", action='store_true', help="Skip install_ext before archive-editor")
+    parser.add_argument("--skip-install-sdk", dest="skip_install_sdk", action='store_true', help="Skip downloading packaged platform SDKs; use tools installed on the machine")
     parser.add_argument("--keychain-cert", dest="keychain_cert", help="Base 64 encoded certificate to import to macOS keychain")
     parser.add_argument("--keychain-cert-pass", dest="keychain_cert_pass", help="Password for the certificate to import to macOS keychain")
     parser.add_argument("--gcloud-service-key", dest="gcloud_service_key", help="String containing Google Cloud service account key")

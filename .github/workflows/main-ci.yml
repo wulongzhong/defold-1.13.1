@@ -1,11 +1,9 @@
 name: CI - Main
 
 on:
-  push:
-    branches-ignore:
-      - 'skip-ci-*'
-      - 'DEFEDIT-*'
-
+  # Official full pipeline needs Defold S3/signing secrets.
+  # Forks and local checkouts should use hosted-desktop.yml instead.
+  workflow_dispatch:
   repository_dispatch: {}
 
 env:
