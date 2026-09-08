@@ -1103,6 +1103,19 @@ class ToolQualityTest(unittest.TestCase):
             self.assertIn("defold-agent", snippet["data"]["text"])
             self.assertFalse(snippet["data"]["http"])
 
+    def test_api_manage_reads_engine_docs(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            result = dispatch_command(project, "api_manage", {"op": "get", "q": "go.set_position"}, 2)
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("engine-docs", result["data"]["source"])
+            names = [item["name"] for item in result["data"]["results"]]
+            self.assertTrue(any("set_position" in name for name in names), names)
+
     def test_project_build_does_not_launch(self):
         import tempfile
         from pathlib import Path

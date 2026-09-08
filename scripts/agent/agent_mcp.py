@@ -55,7 +55,7 @@ TOOLS = [
     ("project_manage", "op: settings_get | settings_set | stop"),
     ("editor_manage", "op: state | selection_get | quit | mcp_config"),
     ("session_manage", "op: list"),
-    ("api_manage", "op: get — forwards GET /ref?q="),
+    ("api_manage", "op: get — editor GET /ref, or engine /*# docs when the editor is closed."),
     ("runtime_observe", "Write a scene_graph snapshot file and return a summary. Uses the live engine if project_run is up; otherwise a batch run. Default does not screenshot."),
     ("runtime_snapshot_query", "Read a precise slice from a snapshot file. Engine may already be dead."),
     ("runtime_get_hierarchy", "Runtime tree from the latest snapshot file (not the authoring collection)."),

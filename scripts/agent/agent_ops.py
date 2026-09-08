@@ -1372,6 +1372,16 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             return ok_envelope({"activated": True, "sessions": 0, "source": "disk"}, readiness="no_editor")
         if command == "session_manage" and params.get("op") == "list":
             return ok_envelope({"sessions": []}, readiness="no_editor")
+        if command == "api_manage":
+            from agent_docs import search_script_docs
+
+            payload = search_script_docs(str(params.get("q") or params.get("query") or ""))
+            if not payload.get("available"):
+                return error_envelope(
+                    "EDITOR_UNREACHABLE",
+                    "api_manage needs the open editor, or the Defold engine source tree beside this CLI.",
+                )
+            return ok_envelope(payload, readiness="no_editor")
         return error_envelope(
             "EDITOR_UNREACHABLE",
             f"{command} needs the open editor graph (first-party /agent/command).",
@@ -1392,6 +1402,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
 
 
 DISK_COMMANDS = [
+    "api_manage",
     "appmanifest_manage",
     "atlas_manage",
     "batch_execute",
@@ -1615,7 +1626,16 @@ def intercept_existing_http(
         )
         got = editor_get(project, f"/ref?{query}", timeout)
         if got is None:
-            return None
+            from agent_docs import search_script_docs
+
+            payload = search_script_docs(q)
+            if not payload.get("available"):
+                return error_envelope(
+                    "EDITOR_UNREACHABLE",
+                    "api_manage needs the open editor, or the Defold engine source tree beside this CLI.",
+                )
+            payload["query"] = query
+            return ok_envelope(payload)
         status, body = got
         if status == 200 and isinstance(body, list):
             return ok_envelope({"query": query, "results": body[:40], "source": "ref"})

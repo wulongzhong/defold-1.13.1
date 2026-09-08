@@ -121,6 +121,8 @@ Sample Cursor config: `scripts/agent/examples/cursor.mcp.json`. Or use **Help �
 
 Aliases (`create_gameobject`, `create_script`, `patch_script`, `add_component`, `node_set_property`, …) resolve in both the CLI dispatcher and the editor.
 
+`api_manage` uses the editor `GET /ref` when it is open. If the editor is closed, the CLI searches `/*#` comments in this repo's engine sources (`go.set_position`, `msg.post`, …).
+
 Do not curl `/agent/command` as the client protocol; use this CLI. Do not add `addons/` or `*.editor_script` for AI.
 
 Authoring tree (`collection_get_hierarchy`) is not the running game. Runtime tree is `runtime_get_hierarchy` / `runtime_snapshot_query` against a snapshot file.
