@@ -133,9 +133,10 @@
  */
 
 /*# file handshake for live agent dumps
- * Watch `DIR/dump.request` each frame. When present, write the scene graph to
- * the path inside that file (or `DIR/dump.json`) and replace it with
- * `DIR/dump.ready`. No HTTP. Used by `defold_agent.py` live observe.
+ * Watch `DIR/dump.request` and `DIR/screenshot.request` each frame. When
+ * present, write the scene graph or a PNG to the path inside that file
+ * (or `DIR/dump.json` / `DIR/shot.png`) and replace it with `*.ready`.
+ * No HTTP. Used by `defold_agent.py` live observe and runtime_screenshot.
  *
  * @macro
  * @name --agent-control=

@@ -518,24 +518,28 @@ def editor_preview(project: Path, resource: str, dest: Path, width: int, height:
     }
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
-    project = None
-    try:
-        project = find_project(Path(args.project) if args.project else None)
-    except FileNotFoundError as error:
-        payload = {"success": False, "issues": [_issue("error", str(error))]}
-        dump_json(payload, Path(args.out) if args.out else None)
-        return 1
+def doctor_payload(project: Path, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    params = params or {}
     editor = read_editor_endpoint(project)
-    bob = find_bob(args.bob, project)
-    engine = find_engine(args.engine, project)
-    payload = {
-        "success": True,
+    bob = find_bob(params.get("bob"), project)
+    engine = find_engine(params.get("engine"), project)
+    from agent_runtime import live_status
+
+    data = {
         "project": str(project),
+        "project_root": str(project),
         "java": find_java(),
         "bob": str(bob) if bob else None,
         "engine": str(engine) if engine else None,
-        "editor": {"url": editor[0]} if editor else None,
+        "editor": {"url": editor[0], "reachable": True} if editor else None,
+        "engine_live": live_status(project),
+        "ready": {
+            "bob": bool(bob),
+            "engine": bool(engine),
+            "java": bool(find_java()),
+            "editor": bool(editor),
+            "game_project": (project / "game.project").is_file(),
+        },
         "hints": {
             "check": "defold_agent.py check --project <dir>",
             "run": "defold_agent.py run --frames 30 --runtime-dump .internal/agent/snapshots/raw.json",
@@ -548,10 +552,32 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 "--quit-after-frames=N",
                 "--runtime-dump=path.json",
                 "--screenshot=path.png",
+                "--agent-control=dir",
                 "--debug-collisions",
             ],
         },
+        "source": "doctor",
     }
+    return data
+
+
+def project_doctor(project: Path, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    from agent_ops import ok_envelope
+
+    data = doctor_payload(project, params)
+    readiness = "ready" if data["ready"]["game_project"] else "no_collection"
+    return ok_envelope(data, readiness=readiness)
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    project = None
+    try:
+        project = find_project(Path(args.project) if args.project else None)
+    except FileNotFoundError as error:
+        payload = {"success": False, "issues": [_issue("error", str(error))]}
+        dump_json(payload, Path(args.out) if args.out else None)
+        return 1
+    payload = {"success": True, **doctor_payload(project, {"bob": args.bob, "engine": args.engine})}
     dump_json(payload, Path(args.out) if args.out else None)
     return 0
 
@@ -775,6 +801,15 @@ def cmd_snapshot_query(args: argparse.Namespace) -> int:
     if args.limit is not None:
         params["limit"] = args.limit
     result = dispatch_command(project, "runtime_snapshot_query", params, args.timeout)
+    return _dump_command(result, args.out)
+
+
+def cmd_runtime_screenshot(args: argparse.Namespace) -> int:
+    project = find_project(Path(args.project) if args.project else None)
+    params: Dict[str, Any] = {}
+    if args.dest:
+        params["dest"] = args.dest
+    result = dispatch_command(project, "runtime_screenshot", params, args.timeout)
     return _dump_command(result, args.out)
 
 
@@ -1015,6 +1050,10 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_diff.add_argument("--b", default="latest")
     snapshot_diff.add_argument("--limit", type=int)
     snapshot_diff.set_defaults(func=cmd_runtime_diff)
+
+    shot_runtime = sub.add_parser("runtime-screenshot", parents=[common], help="Live PNG via control files, not HTTP.")
+    shot_runtime.add_argument("--dest", help="PNG path. Default .internal/agent/snapshots/latest.png")
+    shot_runtime.set_defaults(func=cmd_runtime_screenshot)
 
     loop = sub.add_parser("loop", parents=[common], help="check, then observe (snapshot file + summary).")
     loop.add_argument("--editor", action="store_true")

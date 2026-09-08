@@ -42,7 +42,9 @@
 
 (def command-names
   ["api_manage"
+   "atlas_manage"
    "batch_execute"
+   "camera_manage"
    "collection_get_hierarchy"
    "collection_manage"
    "collection_open"
@@ -56,15 +58,21 @@
    "gameobject_create"
    "gameobject_get_properties"
    "gameobject_manage"
+   "gui_manage"
+   "input_binding_manage"
    "logs_read"
+   "material_manage"
+   "particlefx_manage"
    "project_build"
    "project_manage"
+   "render_manage"
    "script_attach"
    "script_create"
    "script_manage"
    "script_patch"
    "session_activate"
-   "session_manage"])
+   "session_manage"
+   "tilemap_manage"])
 
 (def ^:private command-aliases
   {"add_component" "component_add"
@@ -389,6 +397,7 @@
          :offset offset
          :limit limit
          :total (count children)
+         :source "editor"
          :children (mapv #(outline-node % (:localization ctx)) page)}))))
 
 (defn- cmd-gameobject-get-properties [ctx params]
@@ -403,6 +412,7 @@
      :type (node-kind target)
      :node_id target
      :resource (source-proj-path target)
+     :source "editor"
      :properties (property-snapshot target)}))
 
 (defn- cmd-session-activate [_ctx _params]
@@ -728,6 +738,104 @@
                :results (into [] (take 40) (map json-value (doc/search-ref query)))})
       (unknown-op op ["get"]))))
 
+(defn- slurp-proj-file [ctx path]
+  (let [file (project-file (:workspace ctx) path)]
+    (if-not (.isFile file)
+      (fail! "NOT_FOUND" (str "File not found: " path) nil)
+      (slurp file))))
+
+(defn- rewrite-proj-file! [ctx path text]
+  (let [workspace (:workspace ctx)
+        file (project-file workspace path)]
+    (fs/create-file! file text)
+    (workspace/resource-sync! workspace)
+    {:path path
+     :undoable false
+     :source "editor"}))
+
+(defn- list-ext-paths [ctx ext]
+  (let [workspace (:workspace ctx)
+        root (workspace/project-directory workspace)
+        files (collect-project-files root #{".internal" "build" ".git"} [])]
+    (into []
+          (comp
+            (filter (fn [^File file]
+                      (string/ends-with? (.getName file) (str "." ext))))
+            (map (fn [^File file]
+                   (resource/file->proj-path root file))))
+          files)))
+
+(defn- cmd-file-domain-manage [ctx params ext]
+  (let [op (require-string params :op)]
+    (case op
+      "create" (let [path (sanitize-proj-path (require-string params :path))
+                     name (or (optional-string params :name) (resource-stem path))
+                     content (or (optional-string params :content)
+                                 (if (= "input_binding" ext)
+                                   ""
+                                   (template-content (:workspace ctx) ext name)))]
+                 (assoc (write-new-resource! ctx path content) :source "editor" :undoable false))
+      "list" {:paths (list-ext-paths ctx ext)
+              :source "editor"}
+      "get" (let [path (sanitize-proj-path (require-string params :path))
+                  text (slurp-proj-file ctx path)]
+              {:path path
+               :ids (into [] (map second) (re-seq #"id:\s*\"([^\"]+)\"" text))
+               :source "editor"})
+      "set_property" (let [path (sanitize-proj-path (require-string params :path))
+                           key (require-string params :property)
+                           value (str (get params :value))
+                           text (slurp-proj-file ctx path)]
+                       (rewrite-proj-file! ctx path (str text "\n" key ": \"" value "\"\n")))
+      "remove" (let [path (sanitize-proj-path (require-string params :path))
+                     needle (or (optional-string params :id)
+                                (optional-string params :action)
+                                (optional-string params :image)
+                                (optional-string params :name))]
+                 (if-not needle
+                   (fail! "MISSING_PARAM" "remove needs id, action, image, or name" nil)
+                   (let [text (slurp-proj-file ctx path)]
+                     (if-not (string/includes? text needle)
+                       (fail! "NOT_FOUND" (str "Not found: " needle) nil)
+                       (rewrite-proj-file! ctx path (string/replace-first text needle ""))))))
+      (let [path (sanitize-proj-path (require-string params :path))
+            extra (or (optional-string params :block)
+                      (str "\n# agent " op "\n"))]
+        (rewrite-proj-file! ctx path (str (slurp-proj-file ctx path) extra))))))
+
+(defn- cmd-atlas-manage [ctx params]
+  (cmd-file-domain-manage ctx params "atlas"))
+
+(defn- cmd-tilemap-manage [ctx params]
+  (cmd-file-domain-manage ctx params "tilemap"))
+
+(defn- cmd-gui-manage [ctx params]
+  (cmd-file-domain-manage ctx params "gui"))
+
+(defn- cmd-input-binding-manage [ctx params]
+  (cmd-file-domain-manage ctx params "input_binding"))
+
+(defn- cmd-particlefx-manage [ctx params]
+  (cmd-file-domain-manage ctx params "particlefx"))
+
+(defn- cmd-material-manage [ctx params]
+  (cmd-file-domain-manage ctx params "material"))
+
+(defn- cmd-render-manage [ctx params]
+  (cmd-file-domain-manage ctx params "render"))
+
+(defn- cmd-camera-manage [ctx params]
+  (let [op (require-string params :op)
+        component (or (optional-string params :component)
+                      (optional-string params :id)
+                      "camera")]
+    (case op
+      "add" (cmd-component-add ctx (assoc params :type "camera"))
+      "get" (cmd-gameobject-get-properties ctx (assoc params :component component))
+      "remove" (cmd-component-manage ctx (assoc params :op "remove" :component component))
+      "set_property" (cmd-component-manage ctx (assoc params :op "set_property" :component component))
+      (unknown-op op ["add" "get" "remove" "set_property"]))))
+
 (declare handle)
 
 (defn- cmd-batch-execute [ctx params]
@@ -760,7 +868,9 @@
 
 (def ^:private command-fns
   {"api_manage" cmd-api-manage
+   "atlas_manage" cmd-atlas-manage
    "batch_execute" cmd-batch-execute
+   "camera_manage" cmd-camera-manage
    "collection_get_hierarchy" cmd-collection-get-hierarchy
    "collection_manage" cmd-collection-manage
    "collection_open" cmd-collection-open
@@ -774,15 +884,21 @@
    "gameobject_create" cmd-gameobject-create
    "gameobject_get_properties" cmd-gameobject-get-properties
    "gameobject_manage" cmd-gameobject-manage
+   "gui_manage" cmd-gui-manage
+   "input_binding_manage" cmd-input-binding-manage
    "logs_read" cmd-logs-read
+   "material_manage" cmd-material-manage
+   "particlefx_manage" cmd-particlefx-manage
    "project_build" cmd-project-build
    "project_manage" cmd-project-manage
+   "render_manage" cmd-render-manage
    "script_attach" cmd-script-attach
    "script_create" cmd-script-create
    "script_manage" cmd-script-manage
    "script_patch" cmd-script-patch
    "session_activate" cmd-session-activate
-   "session_manage" cmd-session-manage})
+   "session_manage" cmd-session-manage
+   "tilemap_manage" cmd-tilemap-manage})
 
 (defn- envelope [ctx request-id status-kw payload]
   (cond-> {:status (name status-kw)

@@ -169,6 +169,24 @@ def patch_text(text: str, old_text: str, new_text: str) -> str:
     return text.replace(old_text, new_text, 1)
 
 
+def parse_gameobject_properties(text: str, path: str, go_id: str) -> Optional[Dict[str, Any]]:
+    marker = f'id: "{go_id}"'
+    start = text.find(marker)
+    if start < 0:
+        return None
+    match_text = text[start : start + 800]
+    pos = re.search(r"position\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)", match_text)
+    properties: Dict[str, Any] = {}
+    if pos:
+        properties["position"] = [float(pos.group(1)), float(pos.group(2)), float(pos.group(3))]
+    return {
+        "id": go_id,
+        "path": path,
+        "source": "disk",
+        "properties": properties,
+    }
+
+
 def parse_collection_hierarchy(text: str, path: str) -> Dict[str, Any]:
     children = [{"id": match, "type": "gameobject"} for match in RE_COLLECTION_ID.findall(text)]
     return {
@@ -276,6 +294,15 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             data["truncated"] = offset + limit < len(children)
             data["children"] = children[offset : offset + limit]
             return ok_envelope(data)
+        if command == "gameobject_get_properties":
+            path = params.get("collection") or params.get("path")
+            go_id = params.get("id")
+            if not path or not go_id:
+                return error_envelope("MISSING_PARAM", "gameobject_get_properties needs collection and id")
+            parsed = parse_gameobject_properties(_read_text(project, path), sanitize_proj_path(path), str(go_id))
+            if parsed is None:
+                return error_envelope("NOT_FOUND", f"Game object '{go_id}' was not found")
+            return ok_envelope(parsed)
         if command == "script_create":
             path = params.get("path")
             if not path:
@@ -413,8 +440,18 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
 
 
 DISK_COMMANDS = [
+    "atlas_manage",
     "batch_execute",
+    "camera_manage",
     "collection_get_hierarchy",
+    "gameobject_get_properties",
+    "gui_manage",
+    "input_binding_manage",
+    "material_manage",
+    "particlefx_manage",
+    "project_doctor",
+    "render_manage",
+    "tilemap_manage",
     "collection_manage",
     "editor_state",
     "filesystem_manage",
@@ -589,8 +626,11 @@ RUNTIME_COMMANDS = {
     "runtime_get_properties",
     "runtime_state",
     "runtime_diff",
+    "runtime_screenshot",
     "project_run",
     "project_stop",
+    "project_doctor",
+    "doctor",
 }
 
 
@@ -605,6 +645,7 @@ def handle_runtime_command(
         runtime_get_hierarchy,
         runtime_get_properties,
         runtime_diff,
+        runtime_screenshot,
         runtime_state_payload,
     )
 
@@ -612,6 +653,12 @@ def handle_runtime_command(
         return runtime_state_payload(project)
     if command == "runtime_diff":
         return runtime_diff(project, params)
+    if command == "runtime_screenshot":
+        return runtime_screenshot(project, params)
+    if command in {"project_doctor", "doctor"}:
+        from defold_agent import project_doctor
+
+        return project_doctor(project, params)
     if command == "runtime_snapshot_query":
         return query_snapshot(project, params)
     if command == "runtime_get_hierarchy":
@@ -642,8 +689,32 @@ def dispatch_command(
     params = params or {}
     if command == "batch_execute":
         return batch_execute_commands(project, params, timeout)
+    if command == "session_activate" and params.get("url"):
+        from agent_runtime import activate_target
+
+        return activate_target(project, params)
     if command in RUNTIME_COMMANDS:
         return handle_runtime_command(project, command, params, timeout)
+    from agent_domain import DOMAIN_COMMANDS, handle_domain_command
+
+    if command in DOMAIN_COMMANDS:
+        result = handle_domain_command(project, command, params)
+        path = (result.get("data") or {}).get("path")
+        if result.get("status") == "ok" and path and result.get("data", {}).get("undoable") is False:
+            endpoint = read_editor_endpoint(project)
+            if endpoint:
+                try:
+                    text = project_file(project, path).read_text(encoding="utf-8")
+                    editor_command(
+                        project,
+                        "filesystem_manage",
+                        {"op": "write_text", "path": path, "text": text},
+                        timeout,
+                    )
+                    result["data"]["source"] = "editor"
+                except OSError:
+                    pass
+        return result
     intercepted = intercept_existing_http(project, command, params, timeout)
     if intercepted is not None:
         result = intercepted

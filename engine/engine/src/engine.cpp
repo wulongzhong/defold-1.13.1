@@ -2383,6 +2383,59 @@ bail:
         }
     }
 
+    static void MaybeAgentControlScreenshot(HEngine engine)
+    {
+        if (!engine->m_AgentControlDir[0])
+        {
+            return;
+        }
+
+        char request_path[1024];
+        char ready_path[1024];
+        char default_shot[1024];
+        dmSnPrintf(request_path, sizeof(request_path), "%s/screenshot.request", engine->m_AgentControlDir);
+        dmSnPrintf(ready_path, sizeof(ready_path), "%s/screenshot.ready", engine->m_AgentControlDir);
+        dmSnPrintf(default_shot, sizeof(default_shot), "%s/shot.png", engine->m_AgentControlDir);
+
+        FILE* request = fopen(request_path, "rb");
+        if (!request)
+        {
+            return;
+        }
+
+        char dest[1024];
+        dest[0] = 0;
+        size_t nread = fread(dest, 1, sizeof(dest) - 1, request);
+        fclose(request);
+        dest[nread] = 0;
+        TrimControlLine(dest);
+        if (!dest[0])
+        {
+            dmStrlCpy(dest, default_shot, sizeof(dest));
+        }
+
+        bool ok = CaptureScreenshot(engine, dest);
+        remove(request_path);
+
+        FILE* ready = fopen(ready_path, "wb");
+        if (ready)
+        {
+            fputs(ok ? "OK\n" : "ERROR\n", ready);
+            fputs(dest, ready);
+            fputc('\n', ready);
+            fclose(ready);
+        }
+
+        if (ok)
+        {
+            dmLogInfo("Wrote screenshot to '%s' (agent-control)", dest);
+        }
+        else
+        {
+            dmLogError("Failed to write screenshot '%s' (agent-control)", dest);
+        }
+    }
+
     // Return true if the frame should be skipped
     static bool UpdateFrameThrottle(HEngine engine, float dt, bool has_input)
     {
@@ -2721,6 +2774,7 @@ bail:
         ++engine->m_Stats.m_FrameCount;
         engine->m_Stats.m_TotalTime += dt;
         MaybeAgentControlDump(engine);
+        MaybeAgentControlScreenshot(engine);
         MaybeQuitAfterFrames(engine);
     }
 

@@ -25,6 +25,7 @@ from agent_ops import error_envelope, ok_envelope
 SNAPSHOT_SCHEMA = 1
 SNAPSHOTS_DIR = Path(".internal") / "agent" / "snapshots"
 ENGINE_JSON = Path(".internal") / "agent" / "engine.json"
+TARGET_JSON = Path(".internal") / "agent" / "target.json"
 CONTROL_DIR = Path(".internal") / "agent" / "control"
 ENGINE_LOG = Path(".internal") / "agent" / "engine.log"
 DUMP_WAIT_SEC = 8.0
@@ -636,17 +637,17 @@ def write_engine_record(project: Path, payload: Dict[str, Any]) -> Dict[str, Any
     return payload
 
 
-def request_live_dump(project: Path, dest: Path, timeout: float = DUMP_WAIT_SEC) -> Path:
+def request_live_file(project: Path, kind: str, dest: Path, timeout: float = DUMP_WAIT_SEC) -> Path:
     directory = control_dir(project)
     directory.mkdir(parents=True, exist_ok=True)
-    request = directory / "dump.request"
-    ready = directory / "dump.ready"
+    request = directory / f"{kind}.request"
+    ready = directory / f"{kind}.ready"
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.unlink()
     if ready.exists():
         ready.unlink()
-    tmp = directory / "dump.request.tmp"
+    tmp = directory / f"{kind}.request.tmp"
     tmp.write_text(str(dest), encoding="utf-8")
     tmp.replace(request)
     deadline = time.time() + timeout
@@ -657,10 +658,18 @@ def request_live_dump(project: Path, dest: Path, timeout: float = DUMP_WAIT_SEC)
             status = lines[0] if lines else ""
             ready.unlink(missing_ok=True)
             if status != "OK" or not dest.is_file():
-                raise RuntimeError("Live dump failed")
+                raise RuntimeError(f"Live {kind} failed")
             return dest
         time.sleep(0.05)
-    raise TimeoutError("Timed out waiting for dump.ready")
+    raise TimeoutError(f"Timed out waiting for {kind}.ready")
+
+
+def request_live_dump(project: Path, dest: Path, timeout: float = DUMP_WAIT_SEC) -> Path:
+    return request_live_file(project, "dump", dest, timeout)
+
+
+def request_live_screenshot(project: Path, dest: Path, timeout: float = DUMP_WAIT_SEC) -> Path:
+    return request_live_file(project, "screenshot", dest, timeout)
 
 
 def observe_from_live(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -681,6 +690,19 @@ def observe_from_live(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         )
     except RuntimeError as error:
         return error_envelope("RUNTIME_DUMP_MISSING", str(error))
+    shot = None
+    include = params.get("include") or []
+    if isinstance(include, str):
+        include = [include]
+    if "screenshot" in include:
+        dest = params.get("dest")
+        shot = Path(dest) if dest else snapshots_dir(project) / "_shot.png"
+        if not shot.is_absolute():
+            shot = project / shot
+        try:
+            request_live_screenshot(project, shot, float(params.get("timeout") or DUMP_WAIT_SEC))
+        except (TimeoutError, RuntimeError):
+            shot = None
     record = wrap_engine_dump(
         project,
         raw,
@@ -688,6 +710,7 @@ def observe_from_live(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         frame=None,
         target={"pid": status.get("pid"), "mode": "live"},
         issues=[],
+        screenshot=shot if shot and shot.is_file() else None,
     )
     log_lines = read_engine_log_lines(project)
     return observe_envelope(
@@ -745,8 +768,155 @@ def read_engine_log_lines(project: Path, limit: Optional[int] = 200) -> List[str
     return lines[-max(int(limit), 0) :]
 
 
+def read_pinned_target(project: Path) -> Optional[Dict[str, Any]]:
+    path = project / TARGET_JSON
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_pinned_target(project: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
+    dest = project / TARGET_JSON
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
+def probe_engine_info(url: str, timeout: float = 0.05) -> Optional[Dict[str, Any]]:
+    if not url:
+        return None
+    request = None
+    try:
+        import urllib.request
+
+        request = urllib.request.Request(url.rstrip("/") + "/info")
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+        data = json.loads(raw.decode("utf-8")) if raw[:1] == b"{" else {"raw": raw.decode("utf-8", errors="replace")}
+        data["url"] = url
+        return data
+    except Exception:
+        return None
+
+
+def list_targets(project: Path) -> List[Dict[str, Any]]:
+    seen: List[Dict[str, Any]] = []
+    urls: set[str] = set()
+
+    def add(item: Dict[str, Any]) -> None:
+        url = item.get("url")
+        if url and url in urls:
+            return
+        if url:
+            urls.add(str(url))
+        seen.append(item)
+
+    status = live_status(project)
+    if status.get("alive"):
+        add(
+            {
+                "kind": "cli-live",
+                "pid": status.get("pid"),
+                "url": status.get("url"),
+                "mode": "live",
+                "alive": True,
+            }
+        )
+    env_url = os.environ.get("DEFOLD_AI_ENGINE_URL")
+    if env_url:
+        add({"kind": "env", "url": env_url, "alive": probe_engine_info(env_url) is not None})
+    recorded = read_engine_json(project) or {}
+    if recorded.get("url"):
+        pid = int(recorded["pid"]) if recorded.get("pid") else 0
+        add(
+            {
+                "kind": "engine-json",
+                "url": recorded.get("url"),
+                "pid": pid or None,
+                "alive": bool(recorded.get("mode") == "live" and pid_alive(pid)),
+            }
+        )
+    pinned = read_pinned_target(project)
+    if pinned and pinned.get("url"):
+        add({"kind": "pinned", "url": pinned.get("url"), "alive": probe_engine_info(str(pinned.get("url"))) is not None})
+    add({"kind": "loopback-8001", "url": "http://127.0.0.1:8001", "alive": probe_engine_info("http://127.0.0.1:8001") is not None})
+    current = None
+    for item in seen:
+        if item.get("kind") == "cli-live" and item.get("alive"):
+            current = item
+            break
+    if current is None and pinned and pinned.get("url"):
+        for item in seen:
+            if item.get("url") == pinned.get("url"):
+                current = item
+                break
+    if current is None:
+        for item in seen:
+            if item.get("alive"):
+                current = item
+                break
+    if current is None and seen:
+        current = seen[0]
+    for item in seen:
+        item["current"] = item is current
+    return seen
+
+
+def activate_target(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
+    url = params.get("url")
+    if not url:
+        return error_envelope("MISSING_PARAM", "session_activate needs url to pin a runtime target")
+    targets = list_targets(project)
+    match = next((item for item in targets if item.get("url") == url), None)
+    if match is None:
+        return error_envelope(
+            "UNKNOWN_TARGET",
+            f"Target url is not in the discovered list: {url}",
+            "Call runtime_state and pass one of data.targets[].url.",
+        )
+    write_pinned_target(project, {"url": url, "captured_at": utc_now()})
+    return ok_envelope({"activated": True, "url": url, "target": match, "source": "runtime"})
+
+
+def runtime_screenshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
+    dest = Path(params["dest"]) if params.get("dest") else snapshots_dir(project) / "latest.png"
+    if not dest.is_absolute():
+        dest = project / dest
+    status = live_status(project)
+    if not status.get("alive"):
+        return error_envelope(
+            "ENGINE_NOT_RUNNING",
+            "runtime_screenshot needs a live engine.",
+            "Call project_run mode=live, or observe with include=['screenshot'] for a batch PNG.",
+        )
+    try:
+        request_live_screenshot(project, dest, float(params.get("timeout") or DUMP_WAIT_SEC))
+    except TimeoutError:
+        return error_envelope(
+            "RUNTIME_DUMP_MISSING",
+            "Live engine did not write screenshot.ready. Rebuild dmengine with --agent-control.",
+        )
+    except RuntimeError as error:
+        return error_envelope("RUNTIME_DUMP_MISSING", str(error))
+    return ok_envelope(
+        {
+            "source": "runtime",
+            "screenshot": str(dest),
+            "bytes": dest.stat().st_size,
+            "target": {"pid": status.get("pid"), "alive": True},
+        },
+        readiness="running",
+    )
+
+
 def runtime_state_payload(project: Path) -> Dict[str, Any]:
     status = live_status(project)
+    targets = list_targets(project)
+    current = next((item for item in targets if item.get("current")), None)
     latest = None
     latest_path = snapshots_dir(project) / "latest.json"
     if latest_path.is_file():
@@ -761,7 +931,9 @@ def runtime_state_payload(project: Path) -> Dict[str, Any]:
             "source": "runtime",
             "engine": status,
             "latest_snapshot": latest,
-            "target": {"pid": status.get("pid"), "alive": bool(status.get("alive")), "mode": status.get("mode")},
+            "targets": targets,
+            "target": current
+            or {"pid": status.get("pid"), "alive": bool(status.get("alive")), "mode": status.get("mode")},
         },
         readiness=readiness,
     )

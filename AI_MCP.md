@@ -613,8 +613,8 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 - 编辑器 `POST /agent/command`：路径 B 工具面（hierarchy / create-go / script_patch / manage），源码不是插件
 - `bob --diagnostics-json=`：issues 带 `resource` / `line` / LSP `range`；stdout 另打 `ERROR:BUILD: file:line:`
 - 编辑器 `POST /command/check`：只编译不启动（Godot `--check-only`；`/command/build` 仍会跑游戏）
-- `dmengine --quit-after-frames=N --screenshot=path.png --runtime-dump=path.json --agent-control=dir --debug-collisions`
-- `defold_agent.py observe` / `runtime_observe`：完整 scene_graph 落盘，MCP 默认只回摘要；`runtime_snapshot_query` 从文件取切片（R0）。截屏不是默认观察。
+- `dmengine --quit-after-frames=N --screenshot=path.png --runtime-dump=path.json --agent-control=dir --debug-collisions`（live 另认 `screenshot.request`）
+- `defold_agent.py observe` / `runtime_observe`：完整 scene_graph 落盘，MCP 默认只回摘要；`runtime_snapshot_query` 从文件取切片。live 走 `--agent-control` 文件握手。截屏不是默认观察；`runtime_screenshot` 同样走文件。
 - Lua 运行时：`ERROR:SCRIPT: file:line: message` + `at: file:line`（能从 traceback 补位置）
 - `scripts/agent/AGENTS.md`：空工程模板
 
@@ -636,14 +636,12 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 
 验收：Codex 问「当前 collection 树是什么」，开着编辑器时回到真实节点；「创建一个名为 Cube 的 go」，编辑器里能 Ctrl+Z 掉。编辑器关着时，hierarchy / script / 部分 create 走磁盘文本。
 
-### P2 — 对齐 godot-ai 的产品表面
+### P2 — 对照与领域 ✅（需求 R2）
 
-- 多编辑器 session
-- MCP resources
-- `--exclude-domains`
-- 材料 / 粒子 / atlas / tilemap / input 的 manage
-- custom tool 注册
-- 签名更新（可后延）
+- `runtime_diff`、MCP `defold://runtime/snapshot/{id}`
+- `runtime_state.targets` 多 target 列表（仍默认一个当前）
+- atlas / tilemap / gui / input / particlefx / material / camera / render 的 manage
+- 不做 HTTP MCP；不做 custom tool 注册 / 签名更新
 
 ### 明确不做（直到引擎有能力）
 

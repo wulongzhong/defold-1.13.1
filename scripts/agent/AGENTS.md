@@ -72,6 +72,10 @@ Do **not** `filesystem_manage read_text` a snapshot. Do **not** start the loop w
 
 After two observes, `runtime_diff` / `snapshot-diff` compares the files (default previous vs latest). MCP `resources/list` exposes `defold://runtime/snapshot/{id}` as a handle; `resources/read` returns a summary, not the tree.
 
+`runtime_screenshot` is optional and file-based (`screenshot.request` / `screenshot.ready`). Do not treat it as the main loop.
+
+Authoring domains when the editor is closed: `atlas_manage`, `tilemap_manage`, `gui_manage`, `input_binding_manage`, `particlefx_manage`, `material_manage`, `camera_manage`, `render_manage`. Writes are `undoable: false` and `source: "disk"`.
+
 `loop` is check + observe (still no screenshot unless you pass `--screenshot`).
 
 ## Live run (still files, never HTTP MCP)
@@ -130,7 +134,7 @@ Do not use the interactive debugger. Do not curl the editor as your main protoco
 
 ## Suggested iteration
 
-1. `doctor` — confirm bob / dmengine / optional editor.
+1. `doctor` / `project_doctor` — confirm bob / dmengine / optional editor.
 2. Write a collection, a go, a script.
 3. `check` until `success` is true.
 4. `observe --frames 30` — remember `data.snapshot.id`.

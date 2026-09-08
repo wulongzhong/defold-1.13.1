@@ -424,6 +424,129 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual(1, failed["error"]["data"]["failed_index"])
             self.assertTrue((project / "main" / "b.script").is_file())
 
+    def test_project_doctor_lists_ready_flags(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            result = dispatch_command(project, "project_doctor", {}, 2)
+            self.assertEqual("ok", result["status"])
+            self.assertTrue(result["data"]["ready"]["game_project"])
+            self.assertIn("bob", result["data"]["ready"])
+
+    def test_domain_atlas_and_input(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            created = dispatch_command(
+                project, "atlas_manage", {"op": "create", "path": "/main/sprites.atlas"}, 2
+            )
+            self.assertEqual("ok", created["status"])
+            self.assertFalse(created["data"]["undoable"])
+            added = dispatch_command(
+                project,
+                "atlas_manage",
+                {"op": "add_image", "path": "/main/sprites.atlas", "image": "/main/box.png", "id": "box"},
+                2,
+            )
+            self.assertEqual("ok", added["status"])
+            got = dispatch_command(project, "atlas_manage", {"op": "get", "path": "/main/sprites.atlas"}, 2)
+            self.assertIn("/main/box.png", got["data"]["images"])
+            dispatch_command(project, "input_binding_manage", {"op": "create", "path": "/input/game.input_binding"}, 2)
+            dispatch_command(
+                project,
+                "input_binding_manage",
+                {"op": "add_key", "path": "/input/game.input_binding", "input": "KEY_LEFT", "action": "left"},
+                2,
+            )
+            binds = dispatch_command(
+                project, "input_binding_manage", {"op": "get", "path": "/input/game.input_binding"}, 2
+            )
+            self.assertEqual("left", binds["data"]["bindings"][0]["action"])
+            cam = dispatch_command(
+                project,
+                "camera_manage",
+                {"op": "add", "path": "/main/hero.go", "id": "camera"},
+                2,
+            )
+            # .go missing
+            self.assertEqual("error", cam["status"])
+            (project / "main").mkdir(exist_ok=True)
+            (project / "main" / "hero.go").write_text("", encoding="utf-8")
+            cam = dispatch_command(
+                project, "camera_manage", {"op": "add", "path": "/main/hero.go", "id": "camera"}, 2
+            )
+            self.assertEqual("ok", cam["status"])
+            self.assertIn('type: "camera"', (project / "main" / "hero.go").read_text(encoding="utf-8"))
+
+    def test_authoring_properties_have_disk_source(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text(
+                'name: "main"\nembedded_instances {\n  id: "cube"\n  position {\n    x: 1.0\n    y: 2.0\n    z: 3.0\n  }\n}\n',
+                encoding="utf-8",
+            )
+            result = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("disk", result["data"]["source"])
+            self.assertEqual([1.0, 2.0, 3.0], result["data"]["properties"]["position"])
+
+    def test_runtime_state_lists_targets(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            result = dispatch_command(project, "runtime_state", {}, 2)
+            self.assertEqual("ok", result["status"])
+            self.assertIn("targets", result["data"])
+            kinds = [item["kind"] for item in result["data"]["targets"]]
+            self.assertIn("loopback-8001", kinds)
+
+    def test_screenshot_handshake(self):
+        import tempfile
+        import threading
+        import time
+        from pathlib import Path
+
+        from agent_runtime import request_live_screenshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            control = project / ".internal" / "agent" / "control"
+            dest = project / ".internal" / "agent" / "snapshots" / "shot.png"
+
+            def engine_side():
+                request = control / "screenshot.request"
+                for _ in range(200):
+                    if request.is_file():
+                        break
+                    time.sleep(0.01)
+                path = Path(request.read_text(encoding="utf-8").strip())
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"png")
+                (control / "screenshot.ready").write_text(f"OK\n{path}\n", encoding="utf-8")
+
+            worker = threading.Thread(target=engine_side)
+            worker.start()
+            written = request_live_screenshot(project, dest, timeout=2)
+            worker.join(timeout=2)
+            self.assertTrue(written.is_file())
+            self.assertEqual(b"png", written.read_bytes())
+
     def test_project_build_does_not_launch(self):
         import tempfile
         from pathlib import Path
