@@ -80,13 +80,13 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 
 | 层 | 名字 | 现在 | 本文要求 |
 | --- | --- | --- | --- |
-| L0 | 工程感知 | `editor_state`（含 `engine` / `game_status`）、磁盘读、`api_manage`、`project_doctor` | readiness 门闩：`building` / `observing` 拒写 |
-| L1 | 作者态编辑 | 已有 v0 工具面 | 补 schema、原子 batch、缺的资源域后做 |
+| L0 | 工程感知 | `editor_state`（含 `engine` / `game_status`）、磁盘读、`api_manage`（编辑器 `/ref` 或引擎 `/*#`）、`project_doctor` | readiness 门闩：`building` / `observing` 拒写 |
+| L1 | 作者态编辑 | 磁盘/编辑器同一工具名；关编辑器可建 GO 父子、旋转缩放、tile、GUI 节点；磁盘 `batch_execute` 失败回滚 | 编辑器开着时 batch 仍逐步 undo，回包 `atomic: false` |
 | L2 | 编译诊断 | `check` / bob diagnostics / `ERROR:BUILD` | 继续统一 issues 信封 |
-| L3 | 运行与生命周期 | `run --frames` 会退出；编辑器 Play 对 Agent 不透明 | 批跑 + 保活 + 停止 + 发现 target |
-| L4 | **运行时观察** | **几乎没有**（退出时一张图 + stdout，没有树） | **本阶段主需求：快照文件 + 查询。截屏只是其中一项** |
-| L5 | 运行时干预 | 明确未做 | R2 再评估；不阻塞 L4 |
-| L6 | 领域资源 | atlas / tilemap / tilesource / font / sound / gamepads / display_profiles / model / factory / collectionproxy / collisionobject / gui / input / particlefx / material / camera / render | 编辑器关着走磁盘；`undoable: false` |
+| L3 | 运行与生命周期 | `project_run` batch/live + `project_stop`；CLI 管一个 live dmengine | 保持每工程一个 CLI 进程 |
+| L4 | **运行时观察** | 快照文件 + `runtime_snapshot_query`；live 走 `--agent-control` 握手 | 完整树只落盘；MCP 默认摘要 |
+| L5 | 运行时干预 | 明确未做 | 不进完成定义 |
+| L6 | 领域资源 | atlas / tilemap（含 `set_tile`）/ tilesource / font / sound / gamepads / display_profiles / model / factory / collectionproxy / collisionobject / gui（含 `set_node`）/ input / particlefx / material / camera / render | 编辑器关着走磁盘；`undoable: false` |
 
 `AI_MCP.md` 把「运行时灌输入 / `game_eval` / debugger 截帧」整包标成不做。那是 L5。L4 **不是**同一件事。引擎里已经有只读观察通道，见 §7。
 
@@ -96,16 +96,16 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 
 | Agent 要问的 | 现在实际打到的 | 缺口 |
 | --- | --- | --- |
-| 工程开着吗、当前资源是谁 | `editor_state` / 磁盘 | 还没有统一的「工具是否齐」doctor 进 MCP |
-| collection 树长什么样 | 编辑器图或 `.collection` 文本 | 不是运行时树 |
-| 这个 go 的属性 | 编辑器 `_properties` | 不是脚本改过的值 |
-| 编译过不过 | `check` + issues JSON | 够用 |
-| 画面对不对（可选） | `editor_preview` 或退出时 `--screenshot` | 保活时没有随时截；且不该是主观察手段 |
-| 运行时树上有谁、在哪 | **没有 MCP 工具** | 引擎已有 `GET /scene_graph`，CLI 没接 |
-| 运行时报错 | 解析 stdout；编辑器开着才有 `logs_read` | 批跑和保活日志没合成一条工具 |
-| 目标还在跑吗 | 没有 | 编辑器自己有 target / mDNS，CLI 没用 |
+| 工程开着吗、当前资源是谁 | `editor_state` / `project_doctor` / `defold://project/info` | 齐 |
+| collection 树长什么样 | 编辑器 outline 或磁盘扁平/`nested=true` 树 | 这是作者态，不是运行时树 |
+| 这个 go 的属性 | 编辑器图或磁盘 `source` | 运行时值走 snapshot query |
+| 编译过不过 | `project_check` + issues | 够用 |
+| 画面对不对（可选） | `runtime_screenshot` 或编辑器 preview | 不进默认观察环 |
+| 运行时树上有谁、在哪 | `runtime_observe` → 快照文件 → `runtime_snapshot_query` | 不要 `GET /scene_graph` 当 Agent 协议 |
+| 运行时报错 | `logs_read source=all` | 无日志时回空行，不装失败 |
+| 目标还在跑吗 | `runtime_state` / `editor_state.engine` | CLI live 优先 |
 
-结论：L1/L2 能交差。**完整 MCP 卡在 L3/L4。** 不是引擎从零发明 Godot debugger wire。
+结论：R0–R2 已按本文落地。剩下的是编辑器开着时的整笔 `g/transact` batch、多编辑器 session、以及明确不做的 R3。
 
 ---
 
