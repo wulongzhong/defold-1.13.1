@@ -108,7 +108,10 @@ jobs:
           retention-days: 14
 
       - name: Build bob
-        run: python -u scripts/build.py build_bob --platform=${{ matrix.platform }} --skip-tests --disable-ccache
+        run: |
+          python -u scripts/build.py --save-env-path=ci/env.sh save_env
+          source ci/env.sh
+          python -u scripts/build.py build_bob --platform=${{ matrix.platform }} --skip-tests --disable-ccache
 
       - name: Upload bob
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
