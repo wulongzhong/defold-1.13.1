@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
@@ -630,10 +631,51 @@ def _read_text(project: Path, path: str) -> str:
     return file_path.read_text(encoding="utf-8")
 
 
+class WriteJournal:
+    """First-write snapshots so a disk-only batch can roll back."""
+
+    def __init__(self) -> None:
+        self.entries: List[Tuple[Path, Optional[str]]] = []
+        self._seen: set[str] = set()
+
+    def record(self, path: Path) -> None:
+        resolved = path.resolve()
+        key = str(resolved)
+        if key in self._seen:
+            return
+        self._seen.add(key)
+        if resolved.is_file():
+            self.entries.append((resolved, resolved.read_text(encoding="utf-8")))
+        else:
+            self.entries.append((resolved, None))
+
+    def rollback(self) -> None:
+        for path, previous in reversed(self.entries):
+            if previous is None:
+                if path.is_file():
+                    path.unlink()
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(previous, encoding="utf-8")
+
+
+_write_journal: contextvars.ContextVar[Optional[WriteJournal]] = contextvars.ContextVar(
+    "defold_agent_write_journal",
+    default=None,
+)
+
+
+def note_file_write(path: Path) -> None:
+    journal = _write_journal.get()
+    if journal is not None:
+        journal.record(path)
+
+
 def _write_text(project: Path, path: str, text: str, overwrite: bool) -> Path:
     file_path = project_file(project, path)
     if file_path.exists() and not overwrite:
         raise FileExistsError(path)
+    note_file_write(file_path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(text, encoding="utf-8")
     return file_path
@@ -1048,7 +1090,11 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                     "quit needs the open editor",
                     "Agents should leave the editor running.",
                 )
-            return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["state", "selection_get", "quit"])
+            return error_envelope(
+                "UNKNOWN_OP",
+                f"Unknown op: {op}",
+                suggestions=["state", "selection_get", "quit", "mcp_config"],
+            )
         if command == "project_manage":
             op = params.get("op")
             if op == "stop":
@@ -1069,6 +1115,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             if op == "settings_set":
                 if not key:
                     return error_envelope("MISSING_PARAM", "settings_set needs key")
+                note_file_write(game_project)
                 game_project.write_text(
                     write_game_project_setting(text, str(key), params.get("value")),
                     encoding="utf-8",
@@ -1152,52 +1199,73 @@ def batch_execute_commands(project: Path, params: Dict[str, Any], timeout: float
     commands = params.get("commands")
     if not isinstance(commands, list):
         return error_envelope("MISSING_PARAM", "batch_execute needs commands[]")
+    editor_open = read_editor_endpoint(project) is not None
+    atomic = not editor_open
+    journal = WriteJournal() if atomic else None
+    token = _write_journal.set(journal) if journal is not None else None
     results: List[Any] = []
-    for index, item in enumerate(commands):
-        if not isinstance(item, dict):
-            return error_envelope(
-                "INVALID_PARAM",
-                "Each commands[] item must be an object with command and params",
-                atomic=False,
-                undoable_separately=True,
-                completed=results,
-                failed_index=index,
-            )
-        name = item.get("command")
-        if not name:
-            return error_envelope(
-                "MISSING_PARAM",
-                "commands[] item needs command",
-                atomic=False,
-                undoable_separately=True,
-                completed=results,
-                failed_index=index,
-            )
-        if name == "batch_execute":
-            return error_envelope("NOT_ALLOWED", "Nested batch_execute is not allowed")
-        step = dispatch_command(project, str(name), item.get("params") or {}, timeout)
-        if step.get("status") != "ok":
-            error = dict(step.get("error") or {"code": "HANDLER_ERROR", "message": "batch step failed"})
-            extra = dict(error.get("data") or {})
-            extra.update(
-                {
-                    "completed": results,
-                    "failed_index": index,
-                    "atomic": False,
-                    "undoable_separately": True,
-                }
-            )
-            error["data"] = extra
-            return envelope("error", error=error, readiness=step.get("readiness") or "ready")
-        results.append(step.get("data"))
-    return ok_envelope(
-        {
-            "results": results,
-            "atomic": False,
-            "undoable_separately": True,
-            "source": "local",
-        }
-    )
+    try:
+        for index, item in enumerate(commands):
+            if not isinstance(item, dict):
+                if journal is not None:
+                    journal.rollback()
+                return error_envelope(
+                    "INVALID_PARAM",
+                    "Each commands[] item must be an object with command and params",
+                    atomic=atomic,
+                    rolled_back=journal is not None,
+                    undoable_separately=not atomic,
+                    completed=results,
+                    failed_index=index,
+                )
+            name = item.get("command")
+            if not name:
+                if journal is not None:
+                    journal.rollback()
+                return error_envelope(
+                    "MISSING_PARAM",
+                    "commands[] item needs command",
+                    atomic=atomic,
+                    rolled_back=journal is not None,
+                    undoable_separately=not atomic,
+                    completed=results,
+                    failed_index=index,
+                )
+            if name == "batch_execute":
+                if journal is not None:
+                    journal.rollback()
+                return error_envelope("NOT_ALLOWED", "Nested batch_execute is not allowed")
+            step = dispatch_command(project, str(name), item.get("params") or {}, timeout)
+            if step.get("status") != "ok":
+                rolled_back = False
+                if journal is not None:
+                    journal.rollback()
+                    rolled_back = True
+                error = dict(step.get("error") or {"code": "HANDLER_ERROR", "message": "batch step failed"})
+                extra = dict(error.get("data") or {})
+                extra.update(
+                    {
+                        "completed": results,
+                        "failed_index": index,
+                        "atomic": atomic,
+                        "rolled_back": rolled_back,
+                        "undoable_separately": not atomic,
+                    }
+                )
+                error["data"] = extra
+                return envelope("error", error=error, readiness=step.get("readiness") or "ready")
+            results.append(step.get("data"))
+        return ok_envelope(
+            {
+                "results": results,
+                "atomic": atomic,
+                "undoable_separately": not atomic,
+                "source": "disk" if atomic else "local",
+            }
+        )
+    finally:
+        if token is not None:
+            _write_journal.reset(token)
 
 
 def intercept_existing_http(

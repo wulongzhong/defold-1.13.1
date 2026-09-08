@@ -26,6 +26,7 @@
             [clojure.java.io :as io]
             [clojure.string :as string]
             [dynamo.graph :as g]
+            [editor.agent-config :as agent-config]
             [editor.build :as build]
             [editor.build-errors-view :as build-errors-view]
             [editor.camera :as camera]
@@ -1914,6 +1915,17 @@
   (run [web-server]
     (ui/open-url (http-server/local-url web-server))))
 
+(handler/defhandler :help.copy-mcp-config :global
+  (enabled? [workspace]
+    workspace)
+  (run [workspace]
+    (put-on-clipboard! (agent-config/mcp-config-text (workspace/project-directory workspace) "cursor"))
+    (notifications/show!
+      (workspace/notifications workspace)
+      {:type :info
+       :id ::copy-mcp-config
+       :message (localization/message "notification.help.copy-mcp-config")})))
+
 (handler/defhandler :help.open-donations :global
   (run [] (ui/open-url "https://www.defold.com/donate")))
 
@@ -2037,6 +2049,8 @@
                 :command :help.open-forum}
                {:label (localization/message "command.help.open-editor-server")
                 :command :help.open-editor-server}
+               {:label (localization/message "command.help.copy-mcp-config")
+                :command :help.copy-mcp-config}
                {:label (localization/message "command.help.open-asset-portal")
                 :command :help.open-asset-portal}
                menu-items/separator

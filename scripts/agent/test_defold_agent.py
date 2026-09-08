@@ -443,7 +443,7 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual(name, listed["name"])
         self.assertLess(len(TOOLS), 100)
 
-    def test_batch_execute_is_not_atomic(self):
+    def test_batch_execute_rolls_back_on_disk(self):
         import tempfile
         from pathlib import Path
 
@@ -462,8 +462,8 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("ok", result["status"])
-            self.assertFalse(result["data"]["atomic"])
-            self.assertTrue(result["data"]["undoable_separately"])
+            self.assertTrue(result["data"]["atomic"])
+            self.assertFalse(result["data"]["undoable_separately"])
             self.assertTrue((project / "main" / "a.script").is_file())
             failed = dispatch_command(
                 project,
@@ -477,9 +477,10 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("error", failed["status"])
-            self.assertFalse(failed["error"]["data"]["atomic"])
+            self.assertTrue(failed["error"]["data"]["atomic"])
+            self.assertTrue(failed["error"]["data"]["rolled_back"])
             self.assertEqual(1, failed["error"]["data"]["failed_index"])
-            self.assertTrue((project / "main" / "b.script").is_file())
+            self.assertFalse((project / "main" / "b.script").is_file())
 
     def test_project_doctor_lists_ready_flags(self):
         import tempfile

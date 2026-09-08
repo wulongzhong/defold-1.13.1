@@ -124,6 +124,10 @@
    {:ui-handler :debugger.stop
     :help "Stop the debugger and the running project."}
 
+   :copy-mcp-config
+   {:ui-handler :help.copy-mcp-config
+    :help "Copy a stdio MCP config snippet for the open project. Never an HTTP URL."}
+
    :documentation
    {:ui-handler :help.open-documentation
     :help "Open the Defold documentation in a web browser."}

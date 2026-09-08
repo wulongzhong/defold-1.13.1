@@ -103,7 +103,7 @@ python .../defold_agent.py patch-script --path /main/cube.script --old "function
 python .../defold_agent.py command collection_manage --params "{\"op\":\"create\",\"path\":\"/main/level.collection\"}"
 ```
 
-`batch_execute` runs steps in order. It is **not** one undo. Success and failure both set `atomic: false` and `undoable_separately: true`. Prior steps stay applied.
+`batch_execute` runs steps in order. With the editor closed, disk writes are journaled and a failed step rolls the batch back (`atomic: true`). With the editor open, each graph edit is its own undo (`atomic: false`, `undoable_separately: true`).
 
 stdio MCP (this CLI, no plugin, no HTTP URL):
 
@@ -114,7 +114,7 @@ python .../defold_agent.py mcp-config --format cursor
 python .../defold_agent.py mcp-config --write --project <dir>
 ```
 
-Sample Cursor config: `scripts/agent/examples/cursor.mcp.json`. Clients should use `command` + `args`, never `url = "http://..."`. Resources (`defold://editor/state`, `defold://collection/hierarchy?path=...`, `defold://project/mcp-config`, `defold://runtime/snapshot/{id}`, …) and prompts (`defold-observe`, `defold-live`, `defold-check`) are on the same stdio server.
+Sample Cursor config: `scripts/agent/examples/cursor.mcp.json`. Or use **Help → Copy MCP Config** in the editor (stdio snippet only, never an HTTP URL). Clients should use `command` + `args`. Resources (`defold://editor/state`, `defold://collection/hierarchy?path=...`, `defold://project/mcp-config`, `defold://runtime/snapshot/{id}`, …) and prompts (`defold-observe`, `defold-live`, `defold-check`) are on the same stdio server.
 
 Aliases (`create_gameobject`, `create_script`, `patch_script`, `add_component`, `node_set_property`, …) resolve in both the CLI dispatcher and the editor.
 

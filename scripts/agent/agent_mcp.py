@@ -46,7 +46,7 @@ TOOLS = [
     ("project_check", "Alias of project_build: compile only, never launch."),
     ("logs_read", "Read GET /console when the editor is open, or the last engine log."),
     ("editor_preview", "Authoring preview PNG via GET /preview/{path}. Not a runtime screenshot."),
-    ("batch_execute", "Run commands[] sequentially. Not one undo. Reply has atomic=false."),
+    ("batch_execute", "Run commands[]. Editor closed: one disk rollback (atomic=true). Editor open: sequential graph edits (atomic=false)."),
     ("collection_manage", "op: create | add_instance | remove_instance | get_roots"),
     ("gameobject_manage", "op: delete | rename | set_property | find"),
     ("component_manage", "op: remove | set_property"),

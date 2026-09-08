@@ -356,7 +356,7 @@ v0 已有的 manage 保留。R2 再加：`gui_manage`、`atlas_manage`、`tilema
 | 分页 | 树、日志、search 必须有 `offset`/`limit` 和 `truncated` |
 | 超时 | 探活短超时；batch run 用 `tool_timeout_sec`；live observe 不阻塞到游戏自己退出 |
 | 路径 | 工程内路径以 `/` 开头；快照 JSON、可选 PNG 给绝对路径 |
-| `batch_execute` | R1 做成**同一事务**失败整笔回滚。现在逐步 undo 必须在文档和回包里写明，不能假装原子 |
+| `batch_execute` | 编辑器关着：磁盘写入失败整笔回滚（`atomic: true`）。编辑器开着：逐步图事务，回包必须 `atomic: false` |
 
 ---
 

@@ -20,6 +20,7 @@
             [clojure.java.io :as io]
             [clojure.string :as string]
             [dynamo.graph :as g]
+            [editor.agent-config :as agent-config]
             [editor.app-view :as app-view]
             [editor.code.data :as code.data]
             [editor.collection :as collection]
@@ -822,8 +823,14 @@
                         {:selection (into [] (map long) (or ids []))})
       "quit" {:quit false
               :hint "Quit from the editor UI. Agents should leave the editor running."}
-      "mcp_config" {:hint "python scripts/agent/defold_agent.py mcp-config --write"
-                    :http false}
+      "mcp_config" (let [workspace (:workspace ctx)
+                         format (or (optional-string params :format) "cursor")]
+                     (when-not (contains? #{"cursor" "codex"} format)
+                       (fail! "INVALID_PARAM" "format must be cursor or codex" nil))
+                     {:format format
+                      :text (agent-config/mcp-config-text (workspace/project-directory workspace) format)
+                      :http false
+                      :source "editor"})
       (unknown-op op ["state" "selection_get" "quit" "mcp_config"]))))
 
 (defn- cmd-session-manage [_ctx params]
@@ -1009,6 +1016,7 @@
                                          :completed (get-in acc [:data :results])))))))
                       {:status :ok
                        :data {:results []
+                              :atomic false
                               :undoable_separately true}}
                       commands)]
         (if (= :ok (:status results))
@@ -1016,7 +1024,9 @@
           (fail! (get-in results [:error :code] "HANDLER_ERROR")
                  (get-in results [:error :message] "batch_execute failed")
                  (get-in results [:error :hint])
-                 (dissoc (:error results) :code :message :hint)))))))
+                 (assoc (dissoc (:error results) :code :message :hint)
+                   :atomic false
+                   :undoable_separately true)))))))
 
 (def ^:private command-fns
   {"api_manage" cmd-api-manage

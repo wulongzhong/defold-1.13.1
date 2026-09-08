@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent_ops import error_envelope, ok_envelope, project_file, sanitize_proj_path
+from agent_ops import error_envelope, note_file_write, ok_envelope, project_file, sanitize_proj_path
 
 
 SKIP_DIRS = {".internal", "build", ".git", ".editor"}
@@ -223,6 +223,7 @@ def write_new(project: Path, path: str, text: str) -> Path:
     dest = project_file(project, path)
     if dest.exists():
         raise FileExistsError(path)
+    note_file_write(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
     return dest
@@ -230,6 +231,7 @@ def write_new(project: Path, path: str, text: str) -> Path:
 
 def rewrite(project: Path, path: str, text: str) -> Path:
     dest = project_file(project, path)
+    note_file_write(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
     return dest

@@ -419,7 +419,7 @@ editor.save()
 | 错误码 | 信封 `{status, readiness, error.code}`，业务失败 HTTP 200 |
 | session | 单编辑器；关着编辑器时 `readiness: no_editor` |
 
-`batch_execute` 目前是顺序执行、每步各自 undo，不是整笔回滚。
+`batch_execute`：编辑器关着时磁盘写入会记账，失败整笔回滚（`atomic: true`）。编辑器开着时仍是逐步图事务，回包 `atomic: false`。
 
 ---
 
@@ -547,7 +547,7 @@ Windows 上 token 不防同一台机器的其他本地账户，和 godot-ai 的�
 
 ## 10. 客户端配置（必须一键能抄）
 
-`Help → Defold AI: Copy Codex config` 写出：
+第一方菜单 **Help → Copy MCP Config**（不是工程插件）把 Cursor 用的 stdio 片段拷到剪贴板。CLI 仍可用 `mcp-config --write`。Codex TOML 用 `--format codex`。写出形态：
 
 **Codex** (`~/.codex/config.toml`)：
 
