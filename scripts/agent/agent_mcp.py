@@ -51,7 +51,7 @@ TOOLS = [
     ("gameobject_manage", "op: delete | rename | set_property | find"),
     ("component_manage", "op: remove | set_property"),
     ("script_manage", "op: read | detach"),
-    ("filesystem_manage", "op: read_text | write_text | list | copy | move | delete | search. Do not read or delete snapshot JSON."),
+    ("filesystem_manage", "op: read_text | write_text | list | exists | mkdir | copy | move | delete | search. Do not read or delete snapshot JSON."),
     ("project_manage", "op: settings_get | settings_set | stop"),
     ("editor_manage", "op: state | selection_get | quit | mcp_config"),
     ("session_manage", "op: list"),
@@ -766,7 +766,10 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "additionalProperties": False,
         "required": ["op"],
         "properties": {
-            "op": {"type": "string", "enum": ["read_text", "write_text", "list", "copy", "move", "delete", "search"]},
+            "op": {
+                "type": "string",
+                "enum": ["read_text", "write_text", "list", "exists", "mkdir", "copy", "move", "delete", "search"],
+            },
             "path": {"type": "string"},
             "dest": {"type": "string"},
             "text": {"type": "string"},

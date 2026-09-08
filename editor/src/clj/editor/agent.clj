@@ -105,7 +105,7 @@
    "scene_save" "collection_save"})
 
 (def ^:private read-ops
-  #{"find" "get" "get_roots" "list" "mcp_config" "read" "read_text" "search" "selection_get" "settings_get" "state" "stop"})
+  #{"exists" "find" "get" "get_roots" "list" "mcp_config" "read" "read_text" "search" "selection_get" "settings_get" "state" "stop"})
 
 (def ^:private always-read-commands
   #{"api_manage"
@@ -896,6 +896,22 @@
                   :offset offset
                   :limit limit
                   :truncated (< (+ offset (count page)) (count names))}))
+      "exists" (let [path (sanitize-proj-path (require-string params :path))
+                    file (project-file workspace path)]
+                {:path path
+                 :exists (.exists file)
+                 :type (cond
+                         (.isDirectory file) "directory"
+                         (.isFile file) "file")
+                 :source "editor"})
+      "mkdir" (let [path (sanitize-proj-path (require-string params :path))
+                    file (project-file workspace path)]
+                (.mkdirs file)
+                (workspace/resource-sync! workspace)
+                {:path path
+                 :created true
+                 :undoable false
+                 :source "editor"})
       "copy" (filesystem-copy-or-move! workspace params false)
       "move" (filesystem-copy-or-move! workspace params true)
       "delete" (let [path (sanitize-proj-path (require-string params :path))
@@ -911,7 +927,7 @@
                   :deleted true
                   :undoable false
                   :source "editor"})
-      (unknown-op op ["read_text" "write_text" "list" "copy" "move" "delete" "search"]))))
+      (unknown-op op ["read_text" "write_text" "list" "exists" "mkdir" "copy" "move" "delete" "search"]))))
 
 (defn- cmd-project-manage [ctx params]
   (let [op (require-string params :op)

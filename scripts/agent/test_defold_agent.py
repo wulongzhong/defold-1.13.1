@@ -1082,6 +1082,12 @@ class ToolQualityTest(unittest.TestCase):
             logs = dispatch_command(project, "logs_read", {"source": "all"}, 1)
             self.assertEqual("ok", logs["status"])
             self.assertEqual([], logs["data"]["lines"])
+            made = dispatch_command(project, "filesystem_manage", {"op": "mkdir", "path": "/fx"}, 2)
+            self.assertEqual("ok", made["status"])
+            self.assertTrue((project / "fx").is_dir())
+            existed = dispatch_command(project, "filesystem_manage", {"op": "exists", "path": "/fx"}, 2)
+            self.assertTrue(existed["data"]["exists"])
+            self.assertEqual("directory", existed["data"]["type"])
 
     def test_referenced_go_and_project_stop(self):
         import tempfile

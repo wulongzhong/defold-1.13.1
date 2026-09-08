@@ -49,6 +49,7 @@ READ_OPS = {
     "find",
     "get",
     "get_roots",
+    "exists",
     "list",
     "read",
     "read_text",

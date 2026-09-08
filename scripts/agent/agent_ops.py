@@ -963,6 +963,33 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 path = params.get("path")
                 _write_text(project, path, params.get("text", ""), overwrite=True)
                 return ok_envelope({"path": sanitize_proj_path(path), "written": True, "undoable": False, "source": "disk"})
+            if op == "mkdir":
+                path = params.get("path")
+                if not path:
+                    return error_envelope("MISSING_PARAM", "mkdir needs path")
+                dest = project_file(project, path)
+                dest.mkdir(parents=True, exist_ok=True)
+                return ok_envelope(
+                    {
+                        "path": sanitize_proj_path(path),
+                        "created": True,
+                        "undoable": False,
+                        "source": "disk",
+                    }
+                )
+            if op == "exists":
+                path = params.get("path")
+                if not path:
+                    return error_envelope("MISSING_PARAM", "exists needs path")
+                dest = project_file(project, path)
+                return ok_envelope(
+                    {
+                        "path": sanitize_proj_path(path),
+                        "exists": dest.exists(),
+                        "type": "directory" if dest.is_dir() else "file" if dest.is_file() else None,
+                        "source": "disk",
+                    }
+                )
             if op == "list":
                 rel = params.get("path") or "/"
                 directory = project if rel in {"/", "", ".", None} else project_file(project, str(rel))
@@ -1082,7 +1109,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             return error_envelope(
                 "UNKNOWN_OP",
                 f"Unknown op: {op}",
-                suggestions=["read_text", "write_text", "list", "copy", "move", "delete", "search"],
+                suggestions=["read_text", "write_text", "list", "exists", "mkdir", "copy", "move", "delete", "search"],
             )
         if command == "collection_manage":
             op = params.get("op")
