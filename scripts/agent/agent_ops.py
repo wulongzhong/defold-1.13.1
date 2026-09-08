@@ -1380,6 +1380,16 @@ def dispatch_command(
     blocked = reject_write_if_gated(project, command, params)
     if blocked is not None:
         return blocked
+    if command == "editor_manage" and params.get("op") == "mcp_config":
+        from agent_mcp import mcp_client_config
+
+        kind = str(params.get("format") or "cursor")
+        agent_py = Path(__file__).resolve().parent / "defold_agent.py"
+        text = mcp_client_config(agent_py, project, kind)
+        return overlay_readiness(
+            project,
+            ok_envelope({"format": kind, "text": text, "http": False, "source": "local"}),
+        )
     if command == "project_manage" and params.get("op") == "stop":
         from agent_runtime import live_status, stop_live_engine
 

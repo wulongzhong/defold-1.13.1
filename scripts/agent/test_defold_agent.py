@@ -936,6 +936,10 @@ class ToolQualityTest(unittest.TestCase):
             text = dest.read_text(encoding="utf-8")
             self.assertIn("defold-agent", text)
             self.assertNotIn("http://", text)
+            snippet = dispatch_command(project, "editor_manage", {"op": "mcp_config", "format": "cursor"}, 1)
+            self.assertEqual("ok", snippet["status"])
+            self.assertIn("defold-agent", snippet["data"]["text"])
+            self.assertFalse(snippet["data"]["http"])
 
     def test_project_build_does_not_launch(self):
         import tempfile

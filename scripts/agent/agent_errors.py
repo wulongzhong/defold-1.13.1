@@ -57,6 +57,7 @@ READ_OPS = {
     "settings_get",
     "state",
     "stop",
+    "mcp_config",
 }
 
 ALWAYS_READ_COMMANDS = {

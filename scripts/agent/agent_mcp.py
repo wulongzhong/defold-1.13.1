@@ -53,7 +53,7 @@ TOOLS = [
     ("script_manage", "op: read | detach"),
     ("filesystem_manage", "op: read_text | write_text | search. Do not read snapshot JSON."),
     ("project_manage", "op: settings_get | settings_set | stop"),
-    ("editor_manage", "op: state | selection_get | quit"),
+    ("editor_manage", "op: state | selection_get | quit | mcp_config"),
     ("session_manage", "op: list"),
     ("api_manage", "op: get — forwards GET /ref?q="),
     ("runtime_observe", "Write a scene_graph snapshot file and return a summary. Uses the live engine if project_run is up; otherwise a batch run. Default does not screenshot."),
@@ -756,7 +756,10 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "type": "object",
         "additionalProperties": False,
         "required": ["op"],
-        "properties": {"op": {"type": "string", "enum": ["state", "selection_get", "quit"]}},
+        "properties": {
+            "op": {"type": "string", "enum": ["state", "selection_get", "quit", "mcp_config"]},
+            "format": {"type": "string", "enum": ["cursor", "codex"], "default": "cursor"},
+        },
     },
     "session_manage": {
         "type": "object",

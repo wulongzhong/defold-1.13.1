@@ -104,7 +104,7 @@
    "scene_save" "collection_save"})
 
 (def ^:private read-ops
-  #{"find" "get" "get_roots" "list" "read" "read_text" "search" "selection_get" "settings_get" "state" "stop"})
+  #{"find" "get" "get_roots" "list" "mcp_config" "read" "read_text" "search" "selection_get" "settings_get" "state" "stop"})
 
 (def ^:private always-read-commands
   #{"api_manage"
@@ -822,7 +822,9 @@
                         {:selection (into [] (map long) (or ids []))})
       "quit" {:quit false
               :hint "Quit from the editor UI. Agents should leave the editor running."}
-      (unknown-op op ["state" "selection_get" "quit"]))))
+      "mcp_config" {:hint "python scripts/agent/defold_agent.py mcp-config --write"
+                    :http false}
+      (unknown-op op ["state" "selection_get" "quit" "mcp_config"]))))
 
 (defn- cmd-session-manage [_ctx params]
   (let [op (require-string params :op)]
