@@ -82,7 +82,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | --- | --- | --- | --- |
 | L0 | 工程感知 | `editor_state`（含 `engine` / `game_status`）、磁盘读、`api_manage`（编辑器 `/ref` 或引擎 `/*#`）、`project_doctor` | readiness 门闩：`building` / `observing` 拒写 |
 | L1 | 作者态编辑 | 磁盘/编辑器同一工具名；关编辑器可建 GO 父子、旋转缩放、tile、GUI 节点；磁盘 `batch_execute` 失败回滚 | 编辑器开着时 batch 仍逐步 undo，回包 `atomic: false` |
-| L2 | 编译诊断 | `check` / bob diagnostics / `ERROR:BUILD` | 继续统一 issues 信封 |
+| L2 | 编译诊断 | `check` / bob diagnostics / `ERROR:BUILD` / `diagnostics_read` / 更完整的 `logs_read`（severity/domain/prints/stack） | 继续统一 issues 信封 |
 | L3 | 运行与生命周期 | `project_run` batch/live + `project_stop`；CLI 管一个 live dmengine | 保持每工程一个 CLI 进程 |
 | L4 | **运行时观察** | 快照文件 + `runtime_snapshot_query`；live 走 `--agent-control` 握手 | 完整树只落盘；MCP 默认摘要 |
 | L5 | 运行时干预 | 明确未做 | 不进完成定义 |
@@ -102,7 +102,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | 编译过不过 | `project_check` + issues | 够用 |
 | 画面对不对（可选） | `runtime_screenshot` 或编辑器 preview | 不进默认观察环 |
 | 运行时树上有谁、在哪 | `runtime_observe` → 快照文件 → `runtime_snapshot_query` | 不要 `GET /scene_graph` 当 Agent 协议 |
-| 运行时报错 | `logs_read source=all` | 无日志时回空行，不装失败 |
+| 运行时报错 | `logs_read source=all` + `diagnostics_read` | 无日志时回空行，不装失败 |
 | 目标还在跑吗 | `runtime_state` / `editor_state.engine` | CLI live 优先 |
 
 结论：R0–R2 已按本文落地。剩下的是编辑器开着时的整笔 `g/transact` batch、多编辑器 session、以及明确不做的 R3。
@@ -158,7 +158,7 @@ R0 必须先把 batch 做硬：空工程主环不依赖「一直开着一个窗�
 | `project_run` | 启动；`mode=batch\|live` | `frames` 仅 batch。**编辑器关着也允许 live**，进程由 CLI 管 |
 | `project_stop` | 停掉本 CLI 拉起的引擎 | 无 |
 
-`logs_read` 扩展为：编辑器 `/console` **或** 本轮 dmengine stdout / log_port，回包写 `source`。不要再做一个只读 stdout 的平行工具。
+`logs_read` 扩展为：编辑器 `/console` **或** 本轮 dmengine stdout / log_port，回包写 `source`。`source=all` 合并 console 与 `engine.log`。支持 `severity` / `domain` / `q`，回包带 `issues`（含 stack）和 `prints`（`DEBUG:SCRIPT`）。`diagnostics_read` 合并上次 check、日志和最新快照 issues，不重新编译。不要再做一个只读 stdout 的平行工具。作者态 vs 运行态可用 `runtime_snapshot_query op=compare_authoring`。
 
 `editor_preview` 仍是作者态预览，不是运行时截屏。回包继续 `source: "editor-preview"`。
 
@@ -280,6 +280,7 @@ R1 靠两边各查一次手比，不单独做 diff 工具。`runtime_diff` **进
 | `get_subtree` | 从 `id` 起的子树；`depth`、`limit` | `limit` 80 |
 | `find` | `type` / `id_glob` / `has_property` | `limit` 50 |
 | `get_path` | JSON Pointer（RFC 6901），例如 `/scene_graph/children/0/world_position` | 48 KB；超过 `INLINE_TOO_LARGE` |
+| `compare_authoring` | 作者态 collection GO vs 快照（position / world_position / rotation / scale / parent） | `limit` 80 |
 
 单次查询回包超过 256 节点或 48 KB：成功则必须 `truncated: true` + hint；`get_path` / 调用方 `truncate=false` 则报 `INLINE_TOO_LARGE`。
 
@@ -329,7 +330,7 @@ runtime_screenshot                      → 仅当结构化数据不够、需要
 
 已有且保留：`collection_open` / `collection_save`、`gameobject_create`、`component_add`、`script_create` / `script_attach` / `script_patch`、`project_build`（语义改为优先 check）、`logs_read`、`editor_preview`、`batch_execute`。
 
-新增：`project_run`、`project_stop`、`runtime_get_hierarchy`、`runtime_get_properties`、`runtime_snapshot_query`。可选具名：`runtime_screenshot`。
+新增：`project_run`、`project_stop`、`runtime_get_hierarchy`、`runtime_get_properties`、`runtime_snapshot_query`、`diagnostics_read`。可选具名：`runtime_screenshot`。`project_manage op=hot_reload` 仅编辑器开着时可用。
 
 `runtime_get_*` 默认读 `latest` 快照文件，不是每次打 live HTTP。
 

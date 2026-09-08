@@ -130,13 +130,30 @@ Do not curl `/agent/command` as the client protocol; use this CLI. Do not add `a
 
 Authoring tree (`collection_get_hierarchy`) is not the running game. Runtime tree is `runtime_get_hierarchy` / `runtime_snapshot_query` against a snapshot file.
 
-## Logs you can read without the CLI
+## Diagnose (logs, check, authoring vs runtime)
+
+```bash
+python .../defold_agent.py check
+python .../defold_agent.py logs --source all --severity error
+python .../defold_agent.py diagnostics
+python .../defold_agent.py snapshot-query --op compare_authoring --id cube --collection /main/main.collection
+```
+
+`logs_read` merges the editor console and `.internal/agent/engine.log` when `source=all`. Filter with `severity`, `domain` (SCRIPT / BUILD / GAMESYS / GRAPHICS / CRASH / …), and `q`. `issues[]` include Lua `stack` frames. `prints[]` are `DEBUG:SCRIPT` (`print` / `pprint`). `source=editor-file` reads the latest `editor2.*.log` from the Defold support directory.
+
+`diagnostics_read` does **not** rebuild. It merges the last `project_check` (cached in `.internal/agent/last_check.json`), parsed logs, and issues from the latest snapshot. Use this after observe when asking “what is broken?”.
+
+`runtime_snapshot_query op=compare_authoring` diffs one (or many) authoring GO transforms against the snapshot: local/world position, rotation, scale, parent. That is how you tell “the collection is wrong” from “a script moved it”.
+
+`project_manage op=hot_reload` calls the open editor (`POST /command/hot-reload`). With only a CLI live engine, `project_stop` then `project_run` after `script_patch`.
 
 Engine:
 
 ```
 ERROR:SCRIPT: /main/player.script:12: attempt to index a nil value
           at: /main/player.script:12
+stack traceback:
+  /main/player.script:12: in function update
 ```
 
 Bob:
@@ -145,7 +162,7 @@ Bob:
 ERROR:BUILD: /main/player.script:12: unexpected symbol near 'endd'
 ```
 
-Do not use the interactive debugger. Do not curl the editor as your main protocol; let `defold_agent.py` do that.
+Do not use the interactive debugger (break / step / `debug>`). Do not `game_eval` or inject input. Do not curl the editor as your main protocol; let `defold_agent.py` do that.
 
 ## Suggested iteration
 
@@ -154,4 +171,5 @@ Do not use the interactive debugger. Do not curl the editor as your main protoco
 3. `check` until `success` is true.
 4. `observe --frames 30` — remember `data.snapshot.id`.
 5. `snapshot-query --op get_node --id <go>` (and `find` if needed).
-6. Change one thing. Repeat.
+6. `diagnostics` if something failed; `compare_authoring` if a GO is not where the collection says.
+7. Change one thing. Repeat.

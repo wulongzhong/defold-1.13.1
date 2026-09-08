@@ -65,6 +65,7 @@ ALWAYS_READ_COMMANDS = {
     "api_manage",
     "collection_get_hierarchy",
     "collection_open",
+    "diagnostics_read",
     "doctor",
     "editor_preview",
     "editor_state",

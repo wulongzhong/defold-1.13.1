@@ -64,6 +64,30 @@ class ParseLogTest(unittest.TestCase):
         log = "ERROR:BUILD: /a.script:1: boom\nERROR:BUILD: /a.script:1: boom\n"
         self.assertEqual(1, len(parse_log(log)))
 
+    def test_warning_domain_and_print_and_stack(self):
+        from agent_debug import parse_log_report
+
+        report = parse_log_report(
+            "WARNING:SCRIPT: Http cache disabled\n"
+            "DEBUG:SCRIPT: hello player\n"
+            "ERROR:GAMESYS: Factory failed to spawn\n"
+            "ERROR:SCRIPT: /main/player.script:12: attempt to index a nil value\n"
+            "          at: /main/player.script:12\n"
+            "stack traceback:\n"
+            "  /main/player.script:12: in function update\n"
+            "INFO:ENGINE: Wrote runtime dump\n"
+        )
+        messages = [item["message"] for item in report["issues"]]
+        self.assertIn("Http cache disabled", messages)
+        self.assertIn("Factory failed to spawn", messages)
+        self.assertTrue(all(item["severity"] != "debug" for item in report["issues"]))
+        self.assertEqual(1, len(report["prints"]))
+        self.assertIn("hello player", report["prints"][0]["message"])
+        script = next(item for item in report["issues"] if item.get("resource") == "/main/player.script")
+        self.assertEqual("SCRIPT", script["domain"])
+        self.assertIn("update", script["stack"][0]["where"])
+        self.assertFalse(any("Wrote runtime dump" in item["message"] for item in report["issues"]))
+
 
 class DiskCommandTest(unittest.TestCase):
     def test_patch_text_unique(self):
@@ -277,6 +301,10 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertIn("truncated", result["data"])
             self.assertTrue(any("boom" in line for line in result["data"]["lines"]))
             self.assertEqual("/main/a.script", result["data"]["issues"][0]["resource"])
+            filtered = dispatch_command(project, "logs_read", {"source": "engine", "severity": "error", "q": "boom"}, 1)
+            self.assertEqual(1, len(filtered["data"]["issues"]))
+            prints = dispatch_command(project, "logs_read", {"source": "engine", "q": "hello"}, 1)
+            self.assertIn("hello", prints["data"]["lines"][0])
 
     def test_editor_state_includes_engine(self):
         import tempfile
@@ -381,6 +409,53 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("ok", body["status"])
             self.assertNotIn("scene_graph", body.get("data") or {})
 
+    def test_compare_authoring_and_diagnostics(self):
+        import tempfile
+        from pathlib import Path
+
+        from agent_debug import write_last_check
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _record = self._project_with_snapshot(tmp)
+            main = Path(tmp) / "main"
+            main.mkdir()
+            (main / "main.collection").write_text(
+                'name: "main"\nembedded_instances {\n  id: "cube"\n  data: ""\n'
+                "  position {\n    x: 0.0\n    y: 0.0\n    z: 0.0\n  }\n}\n",
+                encoding="utf-8",
+            )
+            (project / "game.project").write_text(
+                "[bootstrap]\nmain_collection = /main/main.collection\n",
+                encoding="utf-8",
+            )
+            compared = dispatch_command(
+                project,
+                "runtime_snapshot_query",
+                {"op": "compare_authoring", "id": "cube", "collection": "/main/main.collection"},
+                2,
+            )
+            self.assertEqual("ok", compared["status"])
+            item = compared["data"]["items"][0]
+            self.assertEqual("cube", item["id"])
+            self.assertFalse(item["same"])
+            self.assertTrue(any(delta["property"] in {"position", "world_position"} for delta in item["deltas"]))
+            write_last_check(
+                project,
+                {"success": False, "source": "bob", "issues": [{"severity": "error", "message": "boom", "resource": "/main/a.script"}]},
+            )
+            (project / ".internal" / "agent").mkdir(parents=True, exist_ok=True)
+            (project / ".internal" / "agent" / "engine.log").write_text(
+                "ERROR:SCRIPT: /main/a.script:4: nil\n",
+                encoding="utf-8",
+            )
+            diag = dispatch_command(project, "diagnostics_read", {}, 2)
+            self.assertEqual("ok", diag["status"])
+            self.assertGreaterEqual(diag["data"]["counts"]["error"], 1)
+            self.assertTrue(any(issue.get("resource") == "/main/a.script" for issue in diag["data"]["issues"]))
+            blocked = dispatch_command(project, "project_manage", {"op": "hot_reload"}, 1)
+            self.assertEqual("error", blocked["status"])
+            self.assertEqual("EDITOR_UNREACHABLE", blocked["error"]["code"])
+
     def test_stdio_mcp_resources_and_prompts(self):
         import json
         import tempfile
@@ -406,6 +481,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertIn("defold://editor/state", uris)
             self.assertIn("defold://project/info", uris)
             self.assertIn("defold://project/logs", uris)
+            self.assertIn("defold://project/diagnostics", uris)
             self.assertIn("defold://project/mcp-config", uris)
             self.assertTrue(any(item.startswith("defold://collection/hierarchy") for item in uris))
             templates = handle_rpc({"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"}, project, 2)
@@ -422,6 +498,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertTrue(any(item["name"] == "defold-observe" for item in prompts["result"]["prompts"]))
             self.assertTrue(any(item["name"] == "defold-check" for item in prompts["result"]["prompts"]))
             self.assertTrue(any(item["name"] == "defold-author" for item in prompts["result"]["prompts"]))
+            self.assertTrue(any(item["name"] == "defold-diagnose" for item in prompts["result"]["prompts"]))
             prompt = handle_rpc(
                 {"jsonrpc": "2.0", "id": 6, "method": "prompts/get", "params": {"name": "defold-observe"}},
                 project,

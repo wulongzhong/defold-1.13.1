@@ -58,6 +58,7 @@
    "component_manage"
    "compute_manage"
    "cubemap_manage"
+   "diagnostics_read"
    "display_profiles_manage"
    "editor_manage"
    "editor_preview"
@@ -111,6 +112,7 @@
   #{"api_manage"
     "collection_get_hierarchy"
     "collection_open"
+    "diagnostics_read"
     "editor_preview"
     "editor_state"
     "gameobject_get_properties"
@@ -670,14 +672,43 @@
 
 (defn- cmd-logs-read [ctx params]
   (let [console-view (:console-view ctx)
-        limit (or (get params :limit) 200)]
+        limit (long (or (get params :limit) 200))
+        offset (long (or (get params :offset) 0))]
     (if-not console-view
       {:lines []
+       :total 0
+       :offset offset
+       :limit limit
+       :source "console"
        :hint "GET /console"}
       (let [console-node (g/node-value console-view :resource-node)
-            lines (or (g/node-value console-node :lines) [])]
-        {:lines (into [] (take limit) lines)
-         :total (count lines)}))))
+            lines (or (g/node-value console-node :lines) [])
+            total (count lines)
+            end (max 0 (- total offset))
+            start (max 0 (- end limit))
+            sliced (cond
+                     (>= start end)
+                     []
+
+                     (vector? lines)
+                     (subvec lines start end)
+
+                     :else
+                     (into [] (comp (drop start) (take (- end start))) lines))]
+        {:lines sliced
+         :total total
+         :offset offset
+         :limit limit
+         :truncated (pos? start)
+         :source "console"}))))
+
+(defn- cmd-diagnostics-read [ctx params]
+  (let [logs (cmd-logs-read ctx (assoc params :limit (or (get params :limit) 80)))]
+    {:source "editor"
+     :logs logs
+     :issues []
+     :prints []
+     :hint "CLI diagnostics_read merges last check + engine.log + snapshot issues."}))
 
 (defn- cmd-editor-preview [ctx params]
   (let [path (sanitize-proj-path (or (optional-string params :path)
@@ -944,7 +975,9 @@
                           :undoable true})
         "stop" {:stopped false
                 :hint "POST /command/debugger-stop"}
-        (unknown-op op ["settings_get" "settings_set" "stop"])))))
+        "hot_reload" {:reloaded false
+                      :hint "POST /command/hot-reload"}
+        (unknown-op op ["settings_get" "settings_set" "stop" "hot_reload"])))))
 
 (defn- cmd-editor-manage [ctx params]
   (let [op (require-string params :op)]
@@ -1178,6 +1211,7 @@
    "component_manage" cmd-component-manage
    "compute_manage" cmd-compute-manage
    "cubemap_manage" cmd-cubemap-manage
+   "diagnostics_read" cmd-diagnostics-read
    "display_profiles_manage" cmd-display-profiles-manage
    "editor_manage" cmd-editor-manage
    "editor_preview" cmd-editor-preview

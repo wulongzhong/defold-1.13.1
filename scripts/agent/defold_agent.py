@@ -19,7 +19,6 @@ import argparse
 import json
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -49,166 +48,22 @@ from agent_runtime import (
 )
 
 
-ISSUE_KEYS = ("severity", "resource", "line", "message")
-
-RE_ERROR_SCRIPT = re.compile(
-    r"ERROR:SCRIPT:\s+(?P<resource>.+?):(?P<line>\d+):\s+(?P<message>.+)$"
-)
-RE_AT_LOCATION = re.compile(
-    r"^\s+at:\s+(?P<resource>.+?):(?P<line>\d+)\s*$"
-)
-RE_ERROR_BUILD = re.compile(
-    r"(?P<severity>ERROR|WARNING):BUILD:\s+(?P<resource>.+?)(?::(?P<line>\d+))?:\s+(?P<message>.+)$"
-)
-RE_BOB_ERROR = re.compile(
-    r"^ERROR\s+(?P<resource>\S+?)(?::(?P<line>\d+))?\s+(?P<message>.+)$"
-)
-RE_BOB_LOG = re.compile(
-    r"^(?P<severity>ERROR|WARNING|INFO):\s+(?P<resource>.+?):(?P<line>\d+):\s+'(?P<message>.*)'\s*$"
-)
-RE_GODOT_SCRIPT = re.compile(
-    r"^SCRIPT ERROR:\s+(?P<message>.+)$"
-)
-RE_GODOT_AT = re.compile(
-    r"^\s+at:.*\((?P<resource>res://[^):]+):(?P<line>\d+)\)\s*$"
-)
-RE_TRACE_FRAME = re.compile(
-    r"^\s+(?P<resource>\S+?):(?P<line>\d+):\s+in function"
-)
-
-
 def _issue(
     severity: str,
     message: str,
     resource: Optional[str] = None,
     line: Optional[int] = None,
 ) -> Dict[str, Any]:
-    item: Dict[str, Any] = {
-        "severity": severity,
-        "message": message.strip(),
-    }
-    if resource:
-        path = resource.strip().replace("\\", "/")
-        if path.startswith("res://"):
-            path = path[6:]
-        if path and not path.startswith("/") and ":" not in path[:3]:
-            path = "/" + path
-        item["resource"] = path
-    if line is not None and int(line) > 0:
-        line_i = int(line)
-        item["line"] = line_i
-        item["range"] = {
-            "start": {"line": line_i - 1, "character": 0},
-            "end": {"line": line_i - 1, "character": 0},
-        }
-    return item
+    from agent_debug import _issue as make_issue
 
-
-def _issue_key(issue: Dict[str, Any]) -> Tuple[Any, ...]:
-    return tuple(issue.get(k) for k in ISSUE_KEYS)
+    return make_issue(severity, message, resource, line)
 
 
 def parse_log(text: str) -> List[Dict[str, Any]]:
-    """Parse engine / bob / Godot-style logs into editor-shaped issues."""
-    issues: List[Dict[str, Any]] = []
-    pending_godot: Optional[str] = None
-    for raw in text.splitlines():
-        line = raw.rstrip("\r")
-        match = RE_ERROR_SCRIPT.search(line)
-        if match:
-            issues.append(
-                _issue(
-                    "error",
-                    match.group("message"),
-                    match.group("resource"),
-                    int(match.group("line")),
-                )
-            )
-            continue
-        match = RE_AT_LOCATION.search(line)
-        if match and issues:
-            last = issues[-1]
-            if "resource" not in last:
-                last.update(
-                    _issue(
-                        last.get("severity", "error"),
-                        last.get("message", ""),
-                        match.group("resource"),
-                        int(match.group("line")),
-                    )
-                )
-            continue
-        match = RE_ERROR_BUILD.search(line)
-        if match:
-            issues.append(
-                _issue(
-                    "error" if match.group("severity") == "ERROR" else "warning",
-                    match.group("message"),
-                    match.group("resource"),
-                    int(match.group("line")) if match.group("line") else None,
-                )
-            )
-            continue
-        match = RE_BOB_LOG.search(line)
-        if match:
-            severity = {"ERROR": "error", "WARNING": "warning", "INFO": "information"}[
-                match.group("severity")
-            ]
-            issues.append(
-                _issue(
-                    severity,
-                    match.group("message"),
-                    match.group("resource"),
-                    int(match.group("line")),
-                )
-            )
-            continue
-        match = RE_BOB_ERROR.search(line)
-        if match:
-            issues.append(
-                _issue(
-                    "error",
-                    match.group("message"),
-                    match.group("resource"),
-                    int(match.group("line")) if match.group("line") else None,
-                )
-            )
-            continue
-        match = RE_GODOT_SCRIPT.search(line)
-        if match:
-            pending_godot = match.group("message")
-            continue
-        match = RE_GODOT_AT.search(line)
-        if match and pending_godot is not None:
-            issues.append(
-                _issue(
-                    "error",
-                    pending_godot,
-                    match.group("resource"),
-                    int(match.group("line")),
-                )
-            )
-            pending_godot = None
-            continue
-        match = RE_TRACE_FRAME.search(line)
-        if match and issues and "resource" not in issues[-1]:
-            issues[-1].update(
-                _issue(
-                    issues[-1].get("severity", "error"),
-                    issues[-1].get("message", ""),
-                    match.group("resource"),
-                    int(match.group("line")),
-                )
-            )
-    unique: List[Dict[str, Any]] = []
-    seen = set()
-    for issue in issues:
-        key = _issue_key(issue)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(issue)
-    return unique
+    """Parse engine / bob / editor / Godot logs into editor-shaped issues."""
+    from agent_debug import parse_log as parse_log_issues
+
+    return parse_log_issues(text)
 
 
 def find_project(start: Optional[Path] = None) -> Path:
@@ -425,12 +280,15 @@ def check_project(
     prefer_editor: bool,
     timeout: float,
 ) -> Dict[str, Any]:
+    from agent_debug import write_last_check
+
     if prefer_editor:
         editor_payload = editor_check(project, timeout=timeout)
         if editor_payload is not None:
+            write_last_check(project, editor_payload)
             return editor_payload
     if not bob:
-        return {
+        payload = {
             "success": False,
             "source": "agent",
             "issues": [
@@ -441,9 +299,13 @@ def check_project(
                 )
             ],
         }
+        write_last_check(project, payload)
+        return payload
     with tempfile.TemporaryDirectory(prefix="defold-agent-") as tmp:
         diagnostics_path = Path(tmp) / "diagnostics.json"
-        return run_bob(project, bob, ["build"], diagnostics_path)
+        payload = run_bob(project, bob, ["build"], diagnostics_path)
+        write_last_check(project, payload)
+        return payload
 
 
 def run_engine(
@@ -548,6 +410,8 @@ def doctor_payload(project: Path, params: Optional[Dict[str, Any]] = None) -> Di
             "stop": "defold_agent.py project-stop",
             "command": "defold_agent.py command editor_state",
             "mcp": "defold_agent.py mcp   # stdio MCP, no game plugin",
+            "diagnostics": "defold_agent.py diagnostics",
+            "logs": "defold_agent.py logs --source all --severity error",
             "engine_flags": [
                 "--quit-after-frames=N",
                 "--runtime-dump=path.json",
@@ -801,6 +665,8 @@ def cmd_snapshot_query(args: argparse.Namespace) -> int:
         params["id_glob"] = args.id_glob
     if args.limit is not None:
         params["limit"] = args.limit
+    if getattr(args, "collection", None):
+        params["collection"] = args.collection
     result = dispatch_command(project, "runtime_snapshot_query", params, args.timeout)
     return _dump_command(result, args.out)
 
@@ -939,8 +805,28 @@ def cmd_patch_script(args: argparse.Namespace) -> int:
 
 
 def cmd_logs(args: argparse.Namespace) -> int:
+    params: Dict[str, Any] = {"limit": args.limit, "source": args.source}
+    if getattr(args, "offset", None):
+        params["offset"] = args.offset
+    if getattr(args, "q", None):
+        params["q"] = args.q
+    if getattr(args, "severity", None):
+        params["severity"] = args.severity
+    if getattr(args, "domain", None):
+        params["domain"] = args.domain
     args.name = "logs_read"
-    args.params = json.dumps({"limit": args.limit})
+    args.params = json.dumps(params)
+    return cmd_command(args)
+
+
+def cmd_diagnostics(args: argparse.Namespace) -> int:
+    args.name = "diagnostics_read"
+    args.params = json.dumps(
+        {
+            "limit": getattr(args, "limit", 80),
+            "severity": getattr(args, "severity", None) or "all",
+        }
+    )
     return cmd_command(args)
 
 
@@ -1052,11 +938,16 @@ def build_parser() -> argparse.ArgumentParser:
     observe.set_defaults(func=cmd_observe)
 
     snapshot_query = sub.add_parser("snapshot-query", parents=[common], help="Read a slice from a snapshot file.")
-    snapshot_query.add_argument("--op", default="summary", choices=("list", "summary", "list_ids", "get_node", "get_subtree", "find", "get_path"))
+    snapshot_query.add_argument(
+        "--op",
+        default="summary",
+        choices=("list", "summary", "list_ids", "get_node", "get_subtree", "find", "get_path", "compare_authoring"),
+    )
     snapshot_query.add_argument("--snapshot", default="latest")
     snapshot_query.add_argument("--id")
     snapshot_query.add_argument("--component")
-    snapshot_query.add_argument("--path", help="JSON Pointer for get_path.")
+    snapshot_query.add_argument("--path", help="JSON Pointer for get_path, or collection for compare_authoring.")
+    snapshot_query.add_argument("--collection", help="Authoring collection for compare_authoring.")
     snapshot_query.add_argument("--type")
     snapshot_query.add_argument("--id-glob")
     snapshot_query.add_argument("--limit", type=int)
@@ -1132,9 +1023,19 @@ def build_parser() -> argparse.ArgumentParser:
     patch_script.add_argument("--new", required=True)
     patch_script.set_defaults(func=cmd_patch_script)
 
-    logs = sub.add_parser("logs", parents=[common], help="logs_read via GET /console")
+    logs = sub.add_parser("logs", parents=[common], help="logs_read: console, engine.log, or editor2 log")
     logs.add_argument("--limit", type=int, default=200)
+    logs.add_argument("--offset", type=int, default=0)
+    logs.add_argument("--source", choices=("all", "editor", "engine", "editor-file"), default="all")
+    logs.add_argument("-q", "--q", help="Substring filter.")
+    logs.add_argument("--severity", choices=("all", "error", "warning", "information", "debug"), default="all")
+    logs.add_argument("--domain", help="SCRIPT, BUILD, GAMESYS, GRAPHICS, ...")
     logs.set_defaults(func=cmd_logs)
+
+    diagnostics = sub.add_parser("diagnostics", parents=[common], help="Merge last check, logs, and snapshot issues.")
+    diagnostics.add_argument("--limit", type=int, default=80)
+    diagnostics.add_argument("--severity", choices=("all", "error", "warning", "information", "debug"), default="all")
+    diagnostics.set_defaults(func=cmd_diagnostics)
 
     ref = sub.add_parser("ref", parents=[common], help="api_manage get → GET /ref")
     ref.add_argument("-q", "--q", required=True)

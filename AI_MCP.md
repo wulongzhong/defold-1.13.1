@@ -662,7 +662,8 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 | --- | --- |
 | `GET /openapi.json` | 调试时看内建能力 |
 | `POST /command/build` | `project_build` |
-| `GET /console` | `logs_read` |
+| `GET /console` | `logs_read`（`source=all` 还会合并 `engine.log`；`diagnostics_read` 再叠上次 check 和快照 issues） |
+| `POST /command/hot-reload` | `project_manage op=hot_reload`（只要编辑器开着） |
 | `GET /ref?q=` | `api_manage` |
 | `GET /preview/{path}` | `editor_preview` |
 | `POST /eval` | **默认关掉。** 仅内部排障，不注册成 MCP tool |

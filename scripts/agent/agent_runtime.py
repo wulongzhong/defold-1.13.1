@@ -39,7 +39,16 @@ FIND_DEFAULT_LIMIT = 50
 
 RE_SERVICE_PORT = re.compile(r"Engine service started on port (\d+)")
 
-QUERY_OPS = ("list", "summary", "list_ids", "get_node", "get_subtree", "find", "get_path")
+QUERY_OPS = (
+    "list",
+    "summary",
+    "list_ids",
+    "get_node",
+    "get_subtree",
+    "find",
+    "get_path",
+    "compare_authoring",
+)
 
 
 def snapshots_dir(project: Path) -> Path:
@@ -583,7 +592,137 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             )
         return ok_envelope({"path": pointer, "value": value, "source": "runtime", "snapshot": record.get("id")})
 
+    if op == "compare_authoring":
+        return compare_authoring(project, record, params)
+
     return error_envelope("UNKNOWN_OP", f"Unknown op: {op}")
+
+
+def find_runtime_parent(graph: Any, target_id: str) -> Optional[str]:
+    for node in walk_nodes(graph):
+        children = node.get("children")
+        if not isinstance(children, list):
+            continue
+        for child in children:
+            if isinstance(child, dict) and node_id(child) == target_id:
+                parent = node_id(node)
+                return parent or None
+    return None
+
+
+def _as_vec(value: Any) -> Optional[List[float]]:
+    if isinstance(value, (int, float)):
+        return [float(value), float(value), float(value)]
+    if isinstance(value, list) and value:
+        try:
+            return [float(item) for item in value]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def compare_authoring(project: Path, record: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    from agent_ops import parse_collection_hierarchy, parse_gameobject_properties, parse_game_project, sanitize_proj_path
+
+    collection = params.get("collection") or params.get("path")
+    if not collection:
+        game_project = project / "game.project"
+        if game_project.is_file():
+            collection = parse_game_project(game_project.read_text(encoding="utf-8")).get("bootstrap.main_collection")
+    if not collection:
+        return error_envelope("MISSING_PARAM", "compare_authoring needs collection")
+    collection = sanitize_proj_path(str(collection))
+    try:
+        text = (project / collection.lstrip("/")).read_text(encoding="utf-8")
+    except OSError:
+        return error_envelope("NOT_FOUND", f"Collection not found: {collection}")
+    graph = scene_graph_of(record)
+    runtime_idx = index_nodes_by_id(graph)
+    wanted = params.get("id")
+    authoring_ids = [
+        str(node.get("id"))
+        for node in (parse_collection_hierarchy(text, collection).get("children") or [])
+        if node.get("id")
+    ]
+    if wanted:
+        ids = [str(wanted)]
+    else:
+        ids = authoring_ids or [nid for nid in runtime_idx if node_type(runtime_idx[nid]) in {"", "goc"}]
+    limit = min(int(params.get("limit") or PREVIEW_LIMIT), NODE_HARD_CAP)
+    items: List[Dict[str, Any]] = []
+    for go_id in ids[:limit]:
+        authoring = parse_gameobject_properties(text, collection, go_id, project)
+        runtime = runtime_idx.get(go_id)
+        deltas: List[Dict[str, Any]] = []
+        if authoring is None:
+            deltas.append({"property": "id", "authoring": None, "runtime": go_id if runtime else None})
+        if runtime is None:
+            deltas.append({"property": "missing_runtime", "authoring": go_id, "runtime": None})
+        props = (authoring or {}).get("properties") or {}
+        if authoring is not None and runtime is not None:
+            for key in ("position", "rotation", "scale"):
+                left = props.get(key)
+                right = runtime.get(key)
+                left_vec = _as_vec(left)
+                right_vec = _as_vec(right)
+                changed = vec_changed(left_vec, right_vec) if left_vec is not None and right_vec is not None else left != right and right is not None
+                if changed or (left is not None and right is None and key == "position"):
+                    item = {"property": key, "authoring": left, "runtime": right}
+                    if key == "position":
+                        item["world_position"] = runtime.get("world_position")
+                    if left is not None and (right is None or changed):
+                        deltas.append(item)
+            author_parent = authoring.get("parent")
+            runtime_parent = find_runtime_parent(graph, go_id)
+            if (author_parent or None) != (runtime_parent or None):
+                deltas.append({"property": "parent", "authoring": author_parent, "runtime": runtime_parent})
+            if left_vec is not None and runtime.get("world_position") is not None:
+                if vec_changed(left_vec, _as_vec(runtime.get("world_position"))):
+                    if not any(delta.get("property") == "position" for delta in deltas):
+                        deltas.append(
+                            {
+                                "property": "world_position",
+                                "authoring": left,
+                                "runtime": runtime.get("world_position"),
+                            }
+                        )
+        items.append(
+            {
+                "id": go_id,
+                "authoring": {
+                    "source": "disk",
+                    "position": props.get("position"),
+                    "rotation": props.get("rotation"),
+                    "scale": props.get("scale"),
+                    "parent": (authoring or {}).get("parent"),
+                }
+                if authoring
+                else None,
+                "runtime": {
+                    "source": "runtime",
+                    "position": runtime.get("position"),
+                    "world_position": runtime.get("world_position"),
+                    "rotation": runtime.get("rotation"),
+                    "scale": runtime.get("scale"),
+                    "parent": find_runtime_parent(graph, go_id),
+                }
+                if runtime
+                else None,
+                "deltas": deltas,
+                "same": not deltas,
+            }
+        )
+    return ok_envelope(
+        {
+            "source": "compare",
+            "collection": collection,
+            "snapshot": record.get("id"),
+            "items": items,
+            "total": len(ids),
+            "limit": limit,
+            "truncated": len(ids) > limit,
+        }
+    )
 
 
 def control_dir(project: Path) -> Path:

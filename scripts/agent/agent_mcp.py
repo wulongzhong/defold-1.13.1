@@ -25,6 +25,8 @@ PROTOCOL_VERSION = PROTOCOL_VERSIONS[0]
 INSTRUCTIONS = (
     "First-party Defold stdio MCP. Use tools and defold:// resources. "
     "Observe with runtime_observe then runtime_snapshot_query. "
+    "Diagnose with diagnostics_read and logs_read (severity/domain/q). "
+    "Compare authoring vs runtime with runtime_snapshot_query op=compare_authoring. "
     "Do not read snapshot JSON via filesystem_manage. "
     "Do not configure an HTTP MCP URL."
 )
@@ -44,7 +46,8 @@ TOOLS = [
     ("script_patch", "Replace a unique old_text with new_text."),
     ("project_build", "Compile only (bob or editor check). Does not launch the game. Reply always has launched=false."),
     ("project_check", "Alias of project_build: compile only, never launch."),
-    ("logs_read", "Read GET /console when the editor is open, or the last engine log."),
+    ("logs_read", "Read editor console, engine.log, or editor2 log. Filter with source, severity, domain, q. Includes prints and stacks."),
+    ("diagnostics_read", "Merge last project_check, parsed logs, and latest snapshot issues. Does not rebuild."),
     ("editor_preview", "Authoring preview PNG via GET /preview/{path}. Not a runtime screenshot."),
     ("batch_execute", "Run commands[]. Editor closed: one disk rollback (atomic=true). Editor open: sequential graph edits (atomic=false)."),
     ("collection_manage", "op: create | add_instance | remove_instance | get_roots"),
@@ -52,7 +55,7 @@ TOOLS = [
     ("component_manage", "op: remove | set_property"),
     ("script_manage", "op: read | detach"),
     ("filesystem_manage", "op: read_text | write_text | list | exists | mkdir | copy | move | delete | search. Do not read or delete snapshot JSON."),
-    ("project_manage", "op: settings_get | settings_set | stop"),
+    ("project_manage", "op: settings_get | settings_set | stop | hot_reload"),
     ("editor_manage", "op: state | selection_get | quit | mcp_config"),
     ("session_manage", "op: list"),
     ("api_manage", "op: get — editor GET /ref, or engine /*# docs when the editor is closed."),
@@ -114,13 +117,14 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "op": {
                 "type": "string",
-                "enum": ["list", "summary", "list_ids", "get_node", "get_subtree", "find", "get_path"],
+                "enum": ["list", "summary", "list_ids", "get_node", "get_subtree", "find", "get_path", "compare_authoring"],
                 "default": "summary",
             },
             "snapshot": {"type": "string", "default": "latest", "description": "latest, snapshot id, or path."},
             "id": {"type": "string"},
             "component": {"type": "string"},
-            "path": {"type": "string", "description": "JSON Pointer for get_path, e.g. /scene_graph/children/0/id."},
+            "path": {"type": "string", "description": "JSON Pointer for get_path, or collection path for compare_authoring."},
+            "collection": {"type": "string", "description": "Authoring collection for compare_authoring."},
             "type": {"type": "string"},
             "id_glob": {"type": "string"},
             "has_property": {"type": "string"},
@@ -680,7 +684,38 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "offset": {"type": "integer", "default": 0, "description": "Skip this many lines from the end."},
             "limit": {"type": "integer", "default": 200},
-            "source": {"type": "string", "enum": ["all", "editor", "engine"], "default": "all"},
+            "source": {
+                "type": "string",
+                "enum": ["all", "editor", "engine", "editor-file"],
+                "default": "all",
+                "description": "all merges console + engine.log. editor-file reads editor2.*.log.",
+            },
+            "q": {"type": "string", "description": "Substring filter."},
+            "query": {"type": "string"},
+            "severity": {
+                "type": "string",
+                "enum": ["all", "error", "warning", "information", "debug"],
+                "default": "all",
+            },
+            "domain": {"type": "string", "description": "SCRIPT, BUILD, GAMESYS, GRAPHICS, CRASH, ..."},
+        },
+    },
+    "diagnostics_read": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "offset": {"type": "integer", "default": 0},
+            "limit": {"type": "integer", "default": 80},
+            "source": {"type": "string", "enum": ["all", "editor", "engine", "editor-file"], "default": "all"},
+            "q": {"type": "string"},
+            "query": {"type": "string"},
+            "severity": {
+                "type": "string",
+                "enum": ["all", "error", "warning", "information", "debug"],
+                "default": "all",
+            },
+            "domain": {"type": "string"},
+            "snapshot": {"type": "string", "default": "latest"},
         },
     },
     "editor_preview": {
@@ -786,7 +821,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "additionalProperties": False,
         "required": ["op"],
         "properties": {
-            "op": {"type": "string", "enum": ["settings_get", "settings_set", "stop"]},
+            "op": {"type": "string", "enum": ["settings_get", "settings_set", "stop", "hot_reload"]},
             "key": {"type": "string"},
             "path": {},
             "value": {},
@@ -866,7 +901,13 @@ RESOURCE_TEMPLATES = [
     {
         "uriTemplate": "defold://project/logs",
         "name": "project-logs",
-        "description": "Editor console or engine.log tail, plus parsed issues.",
+        "description": "Editor console, engine.log, or editor2 log, plus parsed issues and prints.",
+        "mimeType": "application/json",
+    },
+    {
+        "uriTemplate": "defold://project/diagnostics",
+        "name": "project-diagnostics",
+        "description": "Merged last check, logs, and snapshot issues.",
         "mimeType": "application/json",
     },
     {
@@ -925,6 +966,14 @@ PROMPTS = [
         "name": "defold-check",
         "description": "Compile only, then read logs/issues. Never launch.",
         "arguments": [],
+    },
+    {
+        "name": "defold-diagnose",
+        "description": "Merge check, logs, and snapshot issues. Compare one GO authoring vs runtime.",
+        "arguments": [
+            {"name": "id", "description": "Game object id to compare.", "required": False},
+            {"name": "collection", "description": "Authoring collection.", "required": False},
+        ],
     },
 ]
 
@@ -1008,7 +1057,13 @@ def list_mcp_resources(project: Path) -> List[Dict[str, Any]]:
             "uri": "defold://project/logs",
             "name": "project-logs",
             "mimeType": "application/json",
-            "description": "Console or engine.log tail.",
+            "description": "Console, engine.log, or editor2 log.",
+        },
+        {
+            "uri": "defold://project/diagnostics",
+            "name": "project-diagnostics",
+            "mimeType": "application/json",
+            "description": "Merged check, logs, and snapshot issues.",
         },
         {
             "uri": "defold://project/mcp-config",
@@ -1106,6 +1161,8 @@ def read_mcp_resource(project: Path, uri: str, timeout: float) -> Dict[str, Any]
         return dispatch_command(project, "project_doctor", {}, timeout)
     if segments[:2] == ["project", "logs"] or uri.rstrip("/") == "defold://project/logs":
         return dispatch_command(project, "logs_read", {"limit": 80}, timeout)
+    if segments[:2] == ["project", "diagnostics"] or uri.rstrip("/") == "defold://project/diagnostics":
+        return dispatch_command(project, "diagnostics_read", {"limit": 80}, timeout)
     if segments[:2] == ["project", "mcp-config"] or uri.rstrip("/") == "defold://project/mcp-config":
         return dispatch_command(project, "editor_manage", {"op": "mcp_config"}, timeout)
     if segments[:1] == ["ref"]:
@@ -1139,8 +1196,14 @@ def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             "batch_execute is atomic on disk. Do not use an HTTP MCP URL. Do not screenshot."
         ),
         "defold-check": (
-            "Call project_check (launched=false). Then logs_read source=all. "
+            "Call project_check (launched=false). Then diagnostics_read. "
             "Fix issues[].resource using script_patch. Do not run or screenshot."
+        ),
+        "defold-diagnose": (
+            f"Call diagnostics_read. If a snapshot exists, runtime_snapshot_query "
+            f"op=compare_authoring id={go_id} collection={collection}. "
+            "Use logs_read source=all severity=error for stacks and DEBUG:SCRIPT prints. "
+            "Do not start the debugger. Do not screenshot unless the user asks how it looks."
         ),
     }
     if name not in texts:

@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agent_errors import apply_alias, authoring_write
 
@@ -1489,7 +1489,17 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                     encoding="utf-8",
                 )
                 return ok_envelope({"path": key, "value": params.get("value"), "undoable": False, "source": "disk"})
-            return error_envelope("UNKNOWN_OP", f"Unknown op: {op}")
+            if op == "hot_reload":
+                return error_envelope(
+                    "EDITOR_UNREACHABLE",
+                    "hot_reload needs the open editor.",
+                    "With only a CLI live engine, call project_stop then project_run after script_patch.",
+                )
+            return error_envelope(
+                "UNKNOWN_OP",
+                f"Unknown op: {op}",
+                suggestions=["settings_get", "settings_set", "stop", "hot_reload"],
+            )
         if command == "session_activate":
             return ok_envelope({"activated": True, "sessions": 0, "source": "disk"}, readiness="no_editor")
         if command == "session_manage" and params.get("op") == "list":
@@ -1647,6 +1657,186 @@ def batch_execute_commands(project: Path, params: Dict[str, Any], timeout: float
             _write_journal.reset(token)
 
 
+def _dedupe_lines(groups: Sequence[List[str]]) -> List[str]:
+    seen = set()
+    merged: List[str] = []
+    for group in groups:
+        for line in group:
+            if line in seen:
+                continue
+            seen.add(line)
+            merged.append(line)
+    return merged
+
+
+def logs_read_payload(project: Path, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    from agent_debug import (
+        filter_items,
+        filter_lines,
+        find_editor_log_file,
+        issues_from_console_regions,
+        parse_log_report,
+        read_text_lines,
+    )
+    from agent_runtime import read_engine_log_lines
+
+    offset = max(int(params.get("offset") or 0), 0)
+    limit = max(int(params.get("limit") or 200), 1)
+    wanted = str(params.get("source") or "all")
+    known = {"all", "editor", "engine", "editor-file"}
+    if wanted not in known:
+        return error_envelope("INVALID_PARAM", f"source must be one of {sorted(known)}")
+    q = params.get("q") or params.get("query")
+    severity = params.get("severity") or "all"
+    domain = params.get("domain")
+    console_lines: List[str] = []
+    engine_lines: List[str] = []
+    editor_file_lines: List[str] = []
+    regions: List[Any] = []
+    sources: List[str] = []
+    editor_log = None
+    if wanted in {"all", "editor"}:
+        got = editor_get(project, "/console", timeout)
+        if wanted == "editor" and got is None:
+            return error_envelope("EDITOR_UNREACHABLE", "logs_read source=editor needs the open editor")
+        if got is not None:
+            status, body = got
+            if status == 200 and isinstance(body, dict):
+                console_lines = [str(line) for line in (body.get("lines") or []) if line is not None]
+                regions = list(body.get("regions") or [])
+                sources.append("console")
+            elif status != 200 and wanted == "editor":
+                return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
+    if wanted in {"all", "engine"}:
+        engine_lines = read_engine_log_lines(project, None)
+        if engine_lines:
+            sources.append("engine-log")
+    if wanted == "editor-file":
+        editor_log = find_editor_log_file()
+        editor_file_lines = read_text_lines(editor_log) if editor_log else []
+        if editor_log:
+            sources.append("editor-file")
+    if wanted == "all":
+        lines = _dedupe_lines([console_lines, engine_lines])
+        source = "merged" if len(sources) > 1 else (sources[0] if sources else "engine-log")
+    elif wanted == "editor":
+        lines = console_lines
+        source = "console"
+    elif wanted == "engine":
+        lines = engine_lines
+        source = "engine-log"
+    else:
+        lines = editor_file_lines
+        source = "editor-file"
+    report = parse_log_report("\n".join(lines))
+    issues = report["issues"] + issues_from_console_regions(console_lines, regions)
+    filtered_lines = filter_lines(lines, q, severity, domain)
+    filtered_issues = filter_items(issues, q, severity, domain)
+    filtered_prints = filter_items(report["prints"], q, severity, domain)
+    total = len(filtered_lines)
+    end = total - offset
+    start = max(end - limit, 0)
+    sliced = filtered_lines[start:end] if end > 0 else []
+    data: Dict[str, Any] = {
+        "lines": sliced,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "truncated": start > 0,
+        "source": source,
+        "sources": sources,
+        "issues": filtered_issues,
+        "prints": filtered_prints,
+    }
+    if q:
+        data["q"] = q
+    if severity and severity != "all":
+        data["severity"] = severity
+    if domain:
+        data["domain"] = domain
+    if editor_log:
+        data["path"] = str(editor_log)
+    return ok_envelope(data)
+
+
+def diagnostics_read_payload(project: Path, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    from agent_debug import (
+        count_severities,
+        filter_items,
+        find_crash_files,
+        read_last_check,
+        _unique_issues,
+    )
+
+    logs = logs_read_payload(
+        project,
+        {
+            "source": params.get("source") or "all",
+            "limit": params.get("limit") or 80,
+            "offset": params.get("offset") or 0,
+            "q": params.get("q") or params.get("query"),
+            "severity": params.get("severity") or "all",
+            "domain": params.get("domain"),
+        },
+        timeout,
+    )
+    if logs.get("status") != "ok":
+        return logs
+    log_data = logs.get("data") or {}
+    check = read_last_check(project)
+    snapshot = None
+    snapshot_issues: List[Any] = []
+    try:
+        from agent_runtime import load_snapshot, snapshot_handle
+
+        record = load_snapshot(project, params.get("snapshot") or "latest")
+        snapshot = snapshot_handle(record, "summary")
+        snapshot_issues = list(record.get("issues") or [])
+    except (OSError, FileNotFoundError, json.JSONDecodeError, ValueError):
+        snapshot = None
+    severity = params.get("severity") or "all"
+    q = params.get("q") or params.get("query")
+    domain = params.get("domain")
+    merged = _unique_issues(
+        filter_items((check or {}).get("issues") or [], q, severity, domain)
+        + filter_items(log_data.get("issues") or [], q, severity, domain)
+        + filter_items(snapshot_issues, q, severity, domain)
+    )
+    return ok_envelope(
+        {
+            "source": "diagnostics",
+            "check": check,
+            "logs": {
+                "source": log_data.get("source"),
+                "sources": log_data.get("sources") or [],
+                "total": log_data.get("total") or 0,
+                "issues": log_data.get("issues") or [],
+                "prints": log_data.get("prints") or [],
+            },
+            "snapshot": snapshot,
+            "issues": merged,
+            "prints": log_data.get("prints") or [],
+            "crashes": find_crash_files(project),
+            "counts": count_severities(merged),
+        }
+    )
+
+
+def hot_reload_payload(project: Path, timeout: float) -> Dict[str, Any]:
+    endpoint = read_editor_endpoint(project)
+    if not endpoint:
+        return error_envelope(
+            "EDITOR_UNREACHABLE",
+            "hot_reload needs the open editor.",
+            "With only a CLI live engine, call project_stop then project_run after script_patch.",
+        )
+    url, token = endpoint
+    status, body = http_json(f"{url}/command/hot-reload", token, method="POST", timeout=timeout, body={})
+    if status in {200, 202}:
+        return ok_envelope({"reloaded": True, "source": "editor", "http_status": status})
+    return error_envelope("HANDLER_ERROR", f"POST /command/hot-reload failed ({status}): {body}")
+
+
 def intercept_existing_http(
     project: Path,
     command: str,
@@ -1677,46 +1867,11 @@ def intercept_existing_http(
             check_only=True,
         )
     if command == "logs_read":
-        from agent_runtime import read_engine_log_lines
-
-        offset = max(int(params.get("offset") or 0), 0)
-        limit = max(int(params.get("limit") or 200), 1)
-        wanted = str(params.get("source") or "all")
-        got = None if wanted == "engine" else editor_get(project, "/console", timeout)
-        lines: List[str] = []
-        source = "engine-log"
-        if wanted == "editor" and got is None:
-            return error_envelope("EDITOR_UNREACHABLE", "logs_read source=editor needs the open editor")
-        if got is not None:
-            status, body = got
-            if status == 200 and isinstance(body, dict):
-                lines = [str(line) for line in (body.get("lines") or []) if line]
-                source = "console"
-            elif status != 200 and wanted == "editor":
-                return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
-            elif status != 200 and not (project / ".internal" / "agent" / "engine.log").is_file():
-                return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
-        if source != "console":
-            lines = read_engine_log_lines(project, None)
-            if not lines and got is None and wanted == "editor":
-                return error_envelope("EDITOR_UNREACHABLE", "logs_read source=editor needs the open editor")
-        total = len(lines)
-        end = total - offset
-        start = max(end - limit, 0)
-        sliced = lines[start:end] if end > 0 else []
-        from defold_agent import parse_log
-
-        return ok_envelope(
-            {
-                "lines": sliced,
-                "total": total,
-                "offset": offset,
-                "limit": limit,
-                "truncated": start > 0,
-                "source": source,
-                "issues": parse_log("\n".join(sliced)),
-            }
-        )
+        return logs_read_payload(project, params, timeout)
+    if command == "diagnostics_read":
+        return diagnostics_read_payload(project, params, timeout)
+    if command == "project_manage" and params.get("op") == "hot_reload":
+        return hot_reload_payload(project, timeout)
     if command == "editor_preview":
         path = params.get("path") or params.get("resource")
         if not path:
