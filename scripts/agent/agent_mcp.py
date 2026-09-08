@@ -1082,7 +1082,10 @@ def read_mcp_resource(project: Path, uri: str, timeout: float) -> Dict[str, Any]
         path = query.get("path") or query.get("collection")
         if not path and len(segments) > 2:
             path = "/" + "/".join(segments[2:])
-        return dispatch_command(project, "collection_get_hierarchy", {"path": path}, timeout)
+        params = {"path": path}
+        if query.get("nested") in {"1", "true", "yes"} or query.get("tree") in {"1", "true", "yes"}:
+            params["nested"] = True
+        return dispatch_command(project, "collection_get_hierarchy", params, timeout)
     if segments[:1] == ["gameobject"] and "properties" in segments:
         go_id = query.get("id") or (segments[1] if len(segments) > 1 and segments[1] != "properties" else None)
         collection = query.get("collection") or query.get("path")
