@@ -217,6 +217,14 @@
 (defn- project-file ^File [workspace proj-path]
   (io/file (workspace/project-directory workspace) (subs proj-path 1)))
 
+(defn- resource-stem [proj-path]
+  (let [slash (.lastIndexOf proj-path (int \/))
+        dot (.lastIndexOf proj-path (int \.))
+        start (inc slash)]
+    (if (and (pos? dot) (< start dot))
+      (subs proj-path start dot)
+      (subs proj-path start))))
+
 (defn- outline-label [item localization]
   (let [label (:label item)]
     (cond
@@ -728,14 +736,6 @@
      :node_id component
      :type "component"
      :undoable true}))
-
-(defn- resource-stem [proj-path]
-  (let [slash (.lastIndexOf proj-path (int \/))
-        dot (.lastIndexOf proj-path (int \.))
-        start (inc slash)]
-    (if (and (pos? dot) (< start dot))
-      (subs proj-path start dot)
-      (subs proj-path start))))
 
 (defn- cmd-script-create [ctx params]
   (let [path (sanitize-proj-path (require-string params :path))
