@@ -96,6 +96,8 @@ python .../defold_agent.py patch-script --path /main/cube.script --old "function
 python .../defold_agent.py command collection_manage --params "{\"op\":\"create\",\"path\":\"/main/level.collection\"}"
 ```
 
+`batch_execute` runs steps in order. It is **not** one undo. Success and failure both set `atomic: false` and `undoable_separately: true`. Prior steps stay applied.
+
 stdio MCP (still this CLI, still no plugin):
 
 ```bash

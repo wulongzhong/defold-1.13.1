@@ -267,7 +267,15 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             path = params.get("path") or params.get("collection")
             if not path:
                 return error_envelope("MISSING_PARAM", "Missing collection path")
-            return ok_envelope(parse_collection_hierarchy(_read_text(project, path), sanitize_proj_path(path)))
+            data = parse_collection_hierarchy(_read_text(project, path), sanitize_proj_path(path))
+            offset = max(int(params.get("offset") or 0), 0)
+            limit = max(int(params.get("limit") or 200), 1)
+            children = data.get("children") or []
+            data["offset"] = offset
+            data["limit"] = limit
+            data["truncated"] = offset + limit < len(children)
+            data["children"] = children[offset : offset + limit]
+            return ok_envelope(data)
         if command == "script_create":
             path = params.get("path")
             if not path:
@@ -324,8 +332,10 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                             rel = "/" + file_path.relative_to(project).as_posix()
                             matches.append(rel)
                             if len(matches) >= 100:
-                                return ok_envelope({"matches": matches, "source": "disk"})
-                return ok_envelope({"matches": matches, "source": "disk"})
+                                return ok_envelope(
+                                    {"matches": matches, "truncated": True, "limit": 100, "source": "disk"}
+                                )
+                return ok_envelope({"matches": matches, "truncated": False, "limit": 100, "source": "disk"})
             return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["read_text", "write_text", "search"])
         if command == "collection_manage" and params.get("op") == "create":
             path = params.get("path")
@@ -403,11 +413,14 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
 
 
 DISK_COMMANDS = [
+    "batch_execute",
     "collection_get_hierarchy",
     "collection_manage",
     "editor_state",
     "filesystem_manage",
     "gameobject_create",
+    "project_build",
+    "project_check",
     "project_manage",
     "script_create",
     "script_manage",
@@ -415,6 +428,58 @@ DISK_COMMANDS = [
     "session_activate",
     "session_manage",
 ]
+
+
+def batch_execute_commands(project: Path, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    commands = params.get("commands")
+    if not isinstance(commands, list):
+        return error_envelope("MISSING_PARAM", "batch_execute needs commands[]")
+    results: List[Any] = []
+    for index, item in enumerate(commands):
+        if not isinstance(item, dict):
+            return error_envelope(
+                "INVALID_PARAM",
+                "Each commands[] item must be an object with command and params",
+                atomic=False,
+                undoable_separately=True,
+                completed=results,
+                failed_index=index,
+            )
+        name = item.get("command")
+        if not name:
+            return error_envelope(
+                "MISSING_PARAM",
+                "commands[] item needs command",
+                atomic=False,
+                undoable_separately=True,
+                completed=results,
+                failed_index=index,
+            )
+        if name == "batch_execute":
+            return error_envelope("NOT_ALLOWED", "Nested batch_execute is not allowed")
+        step = dispatch_command(project, str(name), item.get("params") or {}, timeout)
+        if step.get("status") != "ok":
+            error = dict(step.get("error") or {"code": "HANDLER_ERROR", "message": "batch step failed"})
+            extra = dict(error.get("data") or {})
+            extra.update(
+                {
+                    "completed": results,
+                    "failed_index": index,
+                    "atomic": False,
+                    "undoable_separately": True,
+                }
+            )
+            error["data"] = extra
+            return envelope("error", error=error, readiness=step.get("readiness") or "ready")
+        results.append(step.get("data"))
+    return ok_envelope(
+        {
+            "results": results,
+            "atomic": False,
+            "undoable_separately": True,
+            "source": "local",
+        }
+    )
 
 
 def intercept_existing_http(
@@ -425,23 +490,59 @@ def intercept_existing_http(
 ) -> Optional[Dict[str, Any]]:
     params = params or {}
     if command in {"project_build", "project_check"}:
-        return None
+        from defold_agent import check_project, find_bob
+
+        bob = find_bob(params.get("bob"), project)
+        payload = check_project(project, bob, prefer_editor=True, timeout=timeout)
+        data = {
+            "success": bool(payload.get("success")),
+            "launched": False,
+            "check_only": True,
+            "source": payload.get("source") or "bob",
+            "issues": payload.get("issues") or [],
+        }
+        if data["success"]:
+            return ok_envelope(data)
+        return error_envelope(
+            "HANDLER_ERROR",
+            "check failed; the game was not launched",
+            issues=data["issues"],
+            launched=False,
+            check_only=True,
+        )
     if command == "logs_read":
         from agent_runtime import read_engine_log_lines
 
-        limit = int(params.get("limit") or 200)
+        offset = max(int(params.get("offset") or 0), 0)
+        limit = max(int(params.get("limit") or 200), 1)
         got = editor_get(project, "/console", timeout)
+        lines: List[str] = []
+        source = "engine-log"
         if got is not None:
             status, body = got
             if status == 200 and isinstance(body, dict):
-                lines = body.get("lines") or []
-                return ok_envelope({"lines": lines[-limit:], "total": len(lines), "source": "console"})
-        lines = read_engine_log_lines(project, limit)
-        if lines:
-            return ok_envelope({"lines": lines, "total": len(lines), "source": "engine-log"})
-        if got is None:
-            return None
-        return error_envelope("HANDLER_ERROR", f"GET /console failed ({got[0]})")
+                lines = [str(line) for line in (body.get("lines") or []) if line]
+                source = "console"
+            elif status != 200 and not (project / ".internal" / "agent" / "engine.log").is_file():
+                return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
+        if source != "console":
+            lines = read_engine_log_lines(project, None)
+            if not lines and got is None:
+                return None
+        total = len(lines)
+        end = total - offset
+        start = max(end - limit, 0)
+        sliced = lines[start:end] if end > 0 else []
+        return ok_envelope(
+            {
+                "lines": sliced,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "truncated": start > 0,
+                "source": source,
+            }
+        )
     if command == "editor_preview":
         path = params.get("path") or params.get("resource")
         if not path:
@@ -535,6 +636,8 @@ def dispatch_command(
     timeout: float,
 ) -> Dict[str, Any]:
     params = params or {}
+    if command == "batch_execute":
+        return batch_execute_commands(project, params, timeout)
     if command in RUNTIME_COMMANDS:
         return handle_runtime_command(project, command, params, timeout)
     intercepted = intercept_existing_http(project, command, params, timeout)

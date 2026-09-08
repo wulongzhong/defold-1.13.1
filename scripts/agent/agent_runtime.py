@@ -732,13 +732,17 @@ def stop_live_engine(project: Path) -> Dict[str, Any]:
     return ok_envelope({"stopped": True, "pid": pid, "source": "runtime"}, readiness="no_runtime")
 
 
-def read_engine_log_lines(project: Path, limit: int = 200) -> List[str]:
+def read_engine_log_lines(project: Path, limit: Optional[int] = 200) -> List[str]:
     path = engine_log_path(project)
     if not path.is_file():
         return []
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = [line for line in text.splitlines() if line]
-    return lines[-limit:]
+    if len(lines) > 20000:
+        lines = lines[-20000:]
+    if limit is None:
+        return lines
+    return lines[-max(int(limit), 0) :]
 
 
 def runtime_state_payload(project: Path) -> Dict[str, Any]:

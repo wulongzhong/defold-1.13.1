@@ -30,10 +30,11 @@ TOOLS = [
     ("script_create", "Create a Lua script from the editor template."),
     ("script_attach", "Attach a .script to a game object."),
     ("script_patch", "Replace a unique old_text with new_text."),
-    ("project_build", "Prefer defold_agent.py check. Editor uses POST /command/check."),
+    ("project_build", "Compile only (bob or editor check). Does not launch the game. Reply always has launched=false."),
+    ("project_check", "Alias of project_build: compile only, never launch."),
     ("logs_read", "Read GET /console when the editor is open, or the last engine log."),
     ("editor_preview", "Authoring preview PNG via GET /preview/{path}. Not a runtime screenshot."),
-    ("batch_execute", "Run commands[] sequentially. Each step is its own undo."),
+    ("batch_execute", "Run commands[] sequentially. Not one undo. Reply has atomic=false."),
     ("collection_manage", "op: create | add_instance | remove_instance | get_roots"),
     ("gameobject_manage", "op: delete | rename | set_property | find"),
     ("component_manage", "op: remove | set_property"),
@@ -131,17 +132,251 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "project_stop": {"type": "object", "additionalProperties": False, "properties": {}},
+    "editor_state": {"type": "object", "additionalProperties": False, "properties": {}},
+    "collection_get_hierarchy": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "path": {"type": "string", "description": "Project path, e.g. /main/main.collection."},
+            "collection": {"type": "string"},
+            "offset": {"type": "integer", "default": 0},
+            "limit": {"type": "integer", "default": 200},
+        },
+    },
+    "gameobject_get_properties": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["id"],
+        "properties": {
+            "collection": {"type": "string"},
+            "path": {"type": "string"},
+            "id": {"type": "string"},
+            "component": {"type": "string"},
+        },
+    },
+    "session_activate": {"type": "object", "additionalProperties": False, "properties": {}},
+    "collection_open": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"path": {"type": "string"}, "collection": {"type": "string"}},
+    },
+    "collection_save": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"path": {"type": "string"}, "collection": {"type": "string"}},
+    },
+    "gameobject_create": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "collection": {"type": "string"},
+            "path": {"type": "string", "description": "Referenced .go path, or collection when used as alias."},
+            "id": {"type": "string"},
+            "parent": {"type": "string"},
+            "position": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 3,
+            },
+        },
+    },
+    "component_add": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["id"],
+        "properties": {
+            "collection": {"type": "string"},
+            "id": {"type": "string"},
+            "type": {"type": "string"},
+            "component_type": {"type": "string"},
+            "path": {"type": "string"},
+        },
+    },
+    "script_create": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["path"],
+        "properties": {
+            "path": {"type": "string"},
+            "name": {"type": "string"},
+            "content": {"type": "string"},
+        },
+    },
+    "script_attach": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["id", "path"],
+        "properties": {
+            "collection": {"type": "string"},
+            "id": {"type": "string"},
+            "path": {"type": "string"},
+        },
+    },
+    "script_patch": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["path", "old_text", "new_text"],
+        "properties": {
+            "path": {"type": "string"},
+            "old_text": {"type": "string"},
+            "new_text": {"type": "string"},
+        },
+    },
+    "project_build": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"bob": {"type": "string", "description": "Optional bob.jar path."}},
+    },
+    "project_check": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"bob": {"type": "string"}},
+    },
+    "logs_read": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "offset": {"type": "integer", "default": 0, "description": "Skip this many lines from the end."},
+            "limit": {"type": "integer", "default": 200},
+        },
+    },
+    "editor_preview": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "path": {"type": "string"},
+            "resource": {"type": "string"},
+            "dest": {"type": "string"},
+            "width": {"type": "integer", "default": 1280},
+            "height": {"type": "integer", "default": 720},
+        },
+    },
+    "batch_execute": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["commands"],
+        "properties": {
+            "commands": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["command"],
+                    "properties": {
+                        "command": {"type": "string"},
+                        "params": {"type": "object"},
+                    },
+                },
+            },
+        },
+    },
+    "collection_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "add_instance", "remove_instance", "get_roots"]},
+            "path": {"type": "string"},
+            "collection": {"type": "string"},
+            "name": {"type": "string"},
+            "id": {"type": "string"},
+        },
+    },
+    "gameobject_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["delete", "rename", "set_property", "find"]},
+            "collection": {"type": "string"},
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+        },
+    },
+    "component_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op", "id", "component"],
+        "properties": {
+            "op": {"type": "string", "enum": ["remove", "set_property"]},
+            "collection": {"type": "string"},
+            "id": {"type": "string"},
+            "component": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+        },
+    },
+    "script_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["read", "detach"]},
+            "path": {"type": "string"},
+            "collection": {"type": "string"},
+            "id": {"type": "string"},
+            "component": {"type": "string"},
+        },
+    },
+    "filesystem_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["read_text", "write_text", "search"]},
+            "path": {"type": "string"},
+            "text": {"type": "string"},
+            "query": {"type": "string"},
+            "ext": {"type": "string"},
+        },
+    },
+    "project_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["settings_get", "settings_set", "stop"]},
+            "key": {"type": "string"},
+            "path": {},
+            "value": {},
+        },
+    },
+    "editor_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {"op": {"type": "string", "enum": ["state", "selection_get", "quit"]}},
+    },
+    "session_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"op": {"type": "string", "enum": ["list"], "default": "list"}},
+    },
+    "api_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "op": {"type": "string", "enum": ["get"], "default": "get"},
+            "q": {"type": "string"},
+            "query": {"type": "string"},
+            "environment": {"type": "string", "default": "runtime"},
+            "language": {"type": "string", "default": "Lua"},
+        },
+    },
 }
 
 
 def _tool_schema(name: str, description: str) -> Dict[str, Any]:
+    schema = TOOL_SCHEMAS.get(name)
+    if schema is None:
+        raise KeyError(f"Missing closed MCP schema for {name}")
     return {
         "name": name,
         "description": description,
-        "inputSchema": TOOL_SCHEMAS.get(
-            name,
-            {"type": "object", "additionalProperties": True},
-        ),
+        "inputSchema": schema,
     }
 
 

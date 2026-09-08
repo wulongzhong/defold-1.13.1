@@ -273,6 +273,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             result = dispatch_command(project, "logs_read", {"limit": 10}, 1)
             self.assertEqual("ok", result["status"])
             self.assertEqual("engine-log", result["data"]["source"])
+            self.assertIn("truncated", result["data"])
             self.assertTrue(any("boom" in line for line in result["data"]["lines"]))
 
     def test_editor_state_includes_engine(self):
@@ -342,6 +343,67 @@ class RuntimeSnapshotTest(unittest.TestCase):
             result = stop_live_engine(project)
             self.assertEqual("ok", result["status"])
             self.assertTrue(result["data"]["stopped"])
+
+
+class ToolQualityTest(unittest.TestCase):
+    def test_closed_mcp_schemas(self):
+        from agent_mcp import TOOLS, TOOL_SCHEMAS, _tool_schema
+
+        for name, description in TOOLS:
+            schema = TOOL_SCHEMAS[name]
+            self.assertEqual(False, schema.get("additionalProperties"), name)
+            listed = _tool_schema(name, description)
+            self.assertEqual(name, listed["name"])
+
+    def test_batch_execute_is_not_atomic(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            result = dispatch_command(
+                project,
+                "batch_execute",
+                {
+                    "commands": [
+                        {"command": "editor_state", "params": {}},
+                        {"command": "script_create", "params": {"path": "/main/a.script"}},
+                    ]
+                },
+                2,
+            )
+            self.assertEqual("ok", result["status"])
+            self.assertFalse(result["data"]["atomic"])
+            self.assertTrue(result["data"]["undoable_separately"])
+            self.assertTrue((project / "main" / "a.script").is_file())
+            failed = dispatch_command(
+                project,
+                "batch_execute",
+                {
+                    "commands": [
+                        {"command": "script_create", "params": {"path": "/main/b.script"}},
+                        {"command": "script_patch", "params": {"path": "/missing.script"}},
+                    ]
+                },
+                2,
+            )
+            self.assertEqual("error", failed["status"])
+            self.assertFalse(failed["error"]["data"]["atomic"])
+            self.assertEqual(1, failed["error"]["data"]["failed_index"])
+            self.assertTrue((project / "main" / "b.script").is_file())
+
+    def test_project_build_does_not_launch(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            result = dispatch_command(project, "project_build", {"bob": "/no/such/bob.jar"}, 2)
+            extra = (result.get("data") or result.get("error", {}).get("data") or {})
+            self.assertFalse(extra.get("launched", True))
+            self.assertTrue(extra.get("check_only"))
 
 
 if __name__ == "__main__":
