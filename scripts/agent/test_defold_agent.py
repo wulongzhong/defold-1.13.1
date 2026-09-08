@@ -1144,6 +1144,53 @@ class ToolQualityTest(unittest.TestCase):
             self.assertIn("defold-agent", snippet["data"]["text"])
             self.assertFalse(snippet["data"]["http"])
 
+    def test_gui_set_and_get_node(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            created = dispatch_command(project, "gui_manage", {"op": "create", "path": "/main/hud.gui"}, 2)
+            self.assertEqual("ok", created["status"])
+            dispatch_command(
+                project,
+                "gui_manage",
+                {"op": "add_text", "path": "/main/hud.gui", "id": "score", "text": "0"},
+                2,
+            )
+            moved = dispatch_command(
+                project,
+                "gui_manage",
+                {
+                    "op": "set_node",
+                    "path": "/main/hud.gui",
+                    "id": "score",
+                    "property": "position",
+                    "value": [10, 20, 0],
+                },
+                2,
+            )
+            self.assertEqual("ok", moved["status"])
+            labeled = dispatch_command(
+                project,
+                "gui_manage",
+                {"op": "set_node", "path": "/main/hud.gui", "id": "score", "property": "text", "value": "99"},
+                2,
+            )
+            self.assertEqual("ok", labeled["status"])
+            node = dispatch_command(
+                project,
+                "gui_manage",
+                {"op": "get_node", "path": "/main/hud.gui", "id": "score"},
+                2,
+            )
+            self.assertEqual("99", node["data"]["text"])
+            self.assertEqual([10.0, 20.0, 0.0], node["data"]["position"])
+            preview = dispatch_command(project, "editor_preview", {"path": "/main/hud.gui"}, 1)
+            self.assertEqual("EDITOR_UNREACHABLE", preview["error"]["code"])
+            self.assertIn("runtime_screenshot", preview["error"].get("hint") or "")
+
     def test_tilemap_set_and_get_tile(self):
         import tempfile
         from pathlib import Path

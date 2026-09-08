@@ -1648,7 +1648,11 @@ def intercept_existing_http(
         dest.parent.mkdir(parents=True, exist_ok=True)
         endpoint = read_editor_endpoint(project)
         if not endpoint:
-            return None
+            return error_envelope(
+                "EDITOR_UNREACHABLE",
+                "editor_preview needs the open editor.",
+                "Use runtime_screenshot for a live PNG, or open the collection in the editor.",
+            )
         url, token = endpoint
         width = int(params.get("width") or 1280)
         height = int(params.get("height") or 720)

@@ -12,7 +12,15 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent_ops import error_envelope, match_brace, note_file_write, ok_envelope, project_file, sanitize_proj_path
+from agent_ops import (
+    error_envelope,
+    match_brace,
+    note_file_write,
+    ok_envelope,
+    project_file,
+    sanitize_proj_path,
+    set_position_in_block,
+)
 
 
 SKIP_DIRS = {".internal", "build", ".git", ".editor"}
@@ -267,7 +275,7 @@ def remove_block_containing(text: str, needle: str) -> str:
 
 def set_scalar(text: str, key: str, value: str) -> str:
     quoted_value = value if value.startswith('"') else f'"{value}"'
-    pattern = re.compile(rf'(^|\n)({re.escape(key)}:\s*)(?:"[^"]*"|[^\s\n]+)')
+    pattern = re.compile(rf'(^|\n)([ \t]*{re.escape(key)}:\s*)(?:"[^"]*"|[^\s\n]+)')
     if pattern.search(text):
         return pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}{quoted_value}", text, count=1)
     suffix = "" if text.endswith("\n") else "\n"
@@ -406,6 +414,52 @@ def handle_file_domain(project: Path, command: str, params: Dict[str, Any]) -> D
                 return error_envelope("MISSING_PARAM", "remove needs id, action, image, or name")
             rewrite(project, path, remove_block_containing(text, str(needle)))
             return ok_envelope({"path": path, "removed": needle, "undoable": False, "source": "disk"})
+        if command == "gui_manage" and op in {"set_node", "get_node"}:
+            ident = params.get("id") or params.get("node")
+            if not ident:
+                return error_envelope("MISSING_PARAM", f"{op} needs id")
+            found = find_named_block(text, "nodes", str(ident))
+            if found is None:
+                return error_envelope("NOT_FOUND", f"GUI node '{ident}' was not found")
+            start, end, block = found
+            if op == "get_node":
+                pos = re.search(
+                    r"position\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)",
+                    block,
+                )
+                return ok_envelope(
+                    {
+                        "path": path,
+                        "id": ident,
+                        "type": scalar(block, "type"),
+                        "text": (quoted(block, "text") or [None])[0],
+                        "texture": (quoted(block, "texture") or [None])[0],
+                        "position": (
+                            [float(pos.group(1)), float(pos.group(2)), float(pos.group(3))]
+                            if pos
+                            else None
+                        ),
+                        "source": "disk",
+                    }
+                )
+            key = params.get("property") or params.get("key")
+            if not key:
+                return error_envelope("MISSING_PARAM", "set_node needs property")
+            if str(key) == "position":
+                new_block = set_position_in_block(block, params.get("value"))
+            else:
+                new_block = set_scalar(block, str(key), str(params.get("value", "")))
+            rewrite(project, path, text[:start] + new_block + text[end:])
+            return ok_envelope(
+                {
+                    "path": path,
+                    "id": ident,
+                    "property": key,
+                    "value": params.get("value"),
+                    "undoable": False,
+                    "source": "disk",
+                }
+            )
         if command == "tilemap_manage" and op in {"set_tile", "get_tile"}:
             layer = str(params.get("layer") or params.get("id") or "layer")
             if params.get("x") is None or params.get("y") is None:
@@ -532,7 +586,7 @@ def known_ops(command: str) -> List[str]:
     extra = {
         "atlas_manage": ["add_image", "add_animation"],
         "tilemap_manage": ["add_layer", "set_tile_set", "set_tile", "get_tile"],
-        "gui_manage": ["add_box", "add_text", "add_texture", "add_font", "set_script"],
+        "gui_manage": ["add_box", "add_text", "add_texture", "add_font", "set_script", "set_node", "get_node"],
         "input_binding_manage": ["add_key", "add_mouse", "add_gamepad", "add_touch"],
         "particlefx_manage": ["add_emitter"],
         "material_manage": ["set_program"],
