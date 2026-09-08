@@ -1,5 +1,6 @@
-# GitHub-hosted only: Apple Silicon engine + Windows x64 engine.
-# No self-hosted runners, no Defold S3 archive, no signing secrets.
+# GitHub-hosted only: desktop engine/bob plus official-style editor zips.
+# No self-hosted runners, no Defold S3 upload, no signing secrets.
+# Editor engines/bob/launcher come from the public 1.13.1 archive on d.defold.com.
 name: Hosted desktop
 
 on:
@@ -19,6 +20,8 @@ permissions:
 env:
   DOTNET_CHANNEL: 9.0.1xx
   DEFOLD_EDITOR_DISABLE_PERFORMANCE_TESTS: true
+  # Same engine SHA as the official 1.13.1 Windows editor (Defold/config).
+  DEFOLD_ENGINE_ARTIFACTS: 574678c7d44be490d874fbed2d0ae6211feec4d9
 
 jobs:
   engine:
@@ -137,3 +140,82 @@ jobs:
       - name: Stop Gradle Daemon
         if: always()
         run: com.dynamo.cr/com.dynamo.cr.bob/gradlew --stop || true
+
+  editor:
+    name: Defold-${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: arm64-macos
+            runner: macos-26
+          - platform: x86_64-win32
+            runner: windows-2025-vs2026
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Restore Unix execute bits
+        run: |
+          chmod +x \
+            ci/ci.sh \
+            scripts/build.py \
+            editor/scripts/lein \
+            editor/scripts/bundle.py
+
+      - name: Cache Defold downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.dcache
+          key: ${{ runner.os }}-${{ matrix.platform }}-dcache-${{ hashFiles('build_tools/sdk.py') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.platform }}-dcache-
+            ${{ runner.os }}-dcache-
+
+      - name: Cache lein installation and Maven dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            editor/build/lein
+            editor/.m2/repository
+          key: ${{ runner.os }}-${{ matrix.platform }}-lein-maven-editor-${{ hashFiles('editor/scripts/lein', 'editor/project.clj', 'editor/profiles.clj') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.platform }}-lein-maven-editor-
+            ${{ runner.os }}-lein-maven-editor-
+
+      - name: Install Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Install Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          java-version: '25'
+          distribution: temurin
+
+      - name: Build editor bundle
+        run: >
+          ci/ci.sh build-editor
+          --platform=${{ matrix.platform }}
+          --skip-tests
+          --engine-artifacts=${{ env.DEFOLD_ENGINE_ARTIFACTS }}
+          --channel=dev
+
+      - name: Upload editor bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Defold-${{ matrix.platform }}
+          path: editor/target/editor/Defold-${{ matrix.platform }}.*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove generated Bob artifact from Maven cache
+        if: always()
+        run: rm -rf editor/.m2/repository/com/defold/lib/bob
