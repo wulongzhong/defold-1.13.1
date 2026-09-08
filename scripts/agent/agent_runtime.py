@@ -255,13 +255,13 @@ def list_snapshot_records(project: Path) -> List[Dict[str, Any]]:
         return []
     records: List[Dict[str, Any]] = []
     for path in sorted(directory.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        if path.name == "latest.json":
+        if path.name in {"latest.json", "_raw.json"}:
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             continue
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or data.get("schema") != SNAPSHOT_SCHEMA or not data.get("scene_graph"):
             continue
         records.append(
             {

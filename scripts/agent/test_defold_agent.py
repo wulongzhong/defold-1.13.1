@@ -391,6 +391,8 @@ class RuntimeSnapshotTest(unittest.TestCase):
             raw = Path(tmp) / "raw2.json"
             raw.write_text(json.dumps(moved), encoding="utf-8")
             wrap_engine_dump(project, raw, mode="batch", frame=31, target={})
+            raw_dump = project / ".internal" / "agent" / "snapshots" / "_raw.json"
+            raw_dump.write_text(json.dumps({"id": "main", "type": "collectionc", "children": []}), encoding="utf-8")
             result = dispatch_command(project, "runtime_diff", {}, 2)
             self.assertEqual("ok", result["status"])
             self.assertIn("newbie", [node["id"] for node in result["data"]["added"]])
