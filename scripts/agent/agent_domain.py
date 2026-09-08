@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent_ops import error_envelope, note_file_write, ok_envelope, project_file, sanitize_proj_path
+from agent_ops import error_envelope, match_brace, note_file_write, ok_envelope, project_file, sanitize_proj_path
 
 
 SKIP_DIRS = {".internal", "build", ".git", ".editor"}
@@ -406,6 +406,36 @@ def handle_file_domain(project: Path, command: str, params: Dict[str, Any]) -> D
                 return error_envelope("MISSING_PARAM", "remove needs id, action, image, or name")
             rewrite(project, path, remove_block_containing(text, str(needle)))
             return ok_envelope({"path": path, "removed": needle, "undoable": False, "source": "disk"})
+        if command == "tilemap_manage" and op in {"set_tile", "get_tile"}:
+            layer = str(params.get("layer") or params.get("id") or "layer")
+            if params.get("x") is None or params.get("y") is None:
+                return error_envelope("MISSING_PARAM", f"{op} needs x and y")
+            x = int(params.get("x"))
+            y = int(params.get("y"))
+            if op == "get_tile":
+                cell = get_tile_cell(text, layer, x, y)
+                if cell is None:
+                    return error_envelope("NOT_FOUND", f"No tile at {layer} ({x},{y})")
+                return ok_envelope({"path": path, "layer": layer, **cell, "source": "disk"})
+            if params.get("tile") is None:
+                return error_envelope("MISSING_PARAM", "set_tile needs tile")
+            tile = int(params.get("tile"))
+            h_flip = int(params.get("h_flip") or 0)
+            v_flip = int(params.get("v_flip") or 0)
+            rewrite(project, path, set_tile_cell(text, layer, x, y, tile, h_flip, v_flip))
+            return ok_envelope(
+                {
+                    "path": path,
+                    "layer": layer,
+                    "x": x,
+                    "y": y,
+                    "tile": tile,
+                    "h_flip": h_flip,
+                    "v_flip": v_flip,
+                    "undoable": False,
+                    "source": "disk",
+                }
+            )
         block = add_block(command, op, params)
         if block is None:
             return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=known_ops(command))
@@ -421,10 +451,87 @@ def handle_file_domain(project: Path, command: str, params: Dict[str, Any]) -> D
         return error_envelope("INVALID_PARAM", str(error))
 
 
+def find_named_block(text: str, header: str, ident: str) -> Optional[tuple]:
+    for match in re.finditer(rf"{header}\s*\{{", text):
+        open_at = text.find("{", match.start())
+        close_at = match_brace(text, open_at) if open_at >= 0 else None
+        if close_at is None:
+            continue
+        block = text[match.start() : close_at + 1]
+        if re.search(rf'id:\s*"{re.escape(ident)}"', block):
+            return match.start(), close_at + 1, block
+    return None
+
+
+def parse_cell(block: str) -> Dict[str, int]:
+    def number(key: str, default: int = 0) -> int:
+        match = re.search(rf"{key}:\s*(-?\d+)", block)
+        return int(match.group(1)) if match else default
+
+    return {
+        "x": number("x"),
+        "y": number("y"),
+        "tile": number("tile", -1),
+        "h_flip": number("h_flip"),
+        "v_flip": number("v_flip"),
+    }
+
+
+def iter_layer_cells(layer_block: str) -> List[tuple]:
+    cells: List[tuple] = []
+    for match in re.finditer(r"cell\s*\{", layer_block):
+        open_at = layer_block.find("{", match.start())
+        close_at = match_brace(layer_block, open_at) if open_at >= 0 else None
+        if close_at is None:
+            continue
+        start = match.start()
+        end = close_at + 1
+        cells.append((start, end, parse_cell(layer_block[start:end])))
+    return cells
+
+
+def format_cell(x: int, y: int, tile: int, h_flip: int, v_flip: int) -> str:
+    return (
+        f"  cell {{\n"
+        f"    x: {int(x)}\n"
+        f"    y: {int(y)}\n"
+        f"    tile: {int(tile)}\n"
+        f"    h_flip: {int(h_flip)}\n"
+        f"    v_flip: {int(v_flip)}\n"
+        f"  }}\n"
+    )
+
+
+def set_tile_cell(text: str, layer: str, x: int, y: int, tile: int, h_flip: int = 0, v_flip: int = 0) -> str:
+    found = find_named_block(text, "layers", layer)
+    if found is None:
+        raise FileNotFoundError(layer)
+    start, end, block = found
+    replacement = format_cell(x, y, tile, h_flip, v_flip)
+    for cell_start, cell_end, cell in iter_layer_cells(block):
+        if cell["x"] == int(x) and cell["y"] == int(y):
+            new_block = block[:cell_start] + replacement + block[cell_end:]
+            return text[:start] + new_block + text[end:]
+    close_at = block.rfind("}")
+    new_block = block[:close_at] + replacement + block[close_at:]
+    return text[:start] + new_block + text[end:]
+
+
+def get_tile_cell(text: str, layer: str, x: int, y: int) -> Optional[Dict[str, int]]:
+    found = find_named_block(text, "layers", layer)
+    if found is None:
+        raise FileNotFoundError(layer)
+    _start, _end, block = found
+    for _cs, _ce, cell in iter_layer_cells(block):
+        if cell["x"] == int(x) and cell["y"] == int(y):
+            return cell
+    return None
+
+
 def known_ops(command: str) -> List[str]:
     extra = {
         "atlas_manage": ["add_image", "add_animation"],
-        "tilemap_manage": ["add_layer", "set_tile_set"],
+        "tilemap_manage": ["add_layer", "set_tile_set", "set_tile", "get_tile"],
         "gui_manage": ["add_box", "add_text", "add_texture", "add_font", "set_script"],
         "input_binding_manage": ["add_key", "add_mouse", "add_gamepad", "add_touch"],
         "particlefx_manage": ["add_emitter"],

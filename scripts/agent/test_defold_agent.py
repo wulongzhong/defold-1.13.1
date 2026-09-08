@@ -1144,6 +1144,50 @@ class ToolQualityTest(unittest.TestCase):
             self.assertIn("defold-agent", snippet["data"]["text"])
             self.assertFalse(snippet["data"]["http"])
 
+    def test_tilemap_set_and_get_tile(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            created = dispatch_command(
+                project,
+                "tilemap_manage",
+                {"op": "create", "path": "/main/level.tilemap", "tile_set": "/main/tiles.tilesource"},
+                2,
+            )
+            self.assertEqual("ok", created["status"])
+            dispatch_command(
+                project,
+                "tilemap_manage",
+                {"op": "add_layer", "path": "/main/level.tilemap", "id": "ground"},
+                2,
+            )
+            painted = dispatch_command(
+                project,
+                "tilemap_manage",
+                {"op": "set_tile", "path": "/main/level.tilemap", "layer": "ground", "x": 2, "y": 3, "tile": 7},
+                2,
+            )
+            self.assertEqual("ok", painted["status"])
+            cell = dispatch_command(
+                project,
+                "tilemap_manage",
+                {"op": "get_tile", "path": "/main/level.tilemap", "layer": "ground", "x": 2, "y": 3},
+                2,
+            )
+            self.assertEqual(7, cell["data"]["tile"])
+            dispatch_command(
+                project,
+                "tilemap_manage",
+                {"op": "set_tile", "path": "/main/level.tilemap", "layer": "ground", "x": 2, "y": 3, "tile": 9},
+                2,
+            )
+            text = (project / "main" / "level.tilemap").read_text(encoding="utf-8")
+            self.assertEqual(1, text.count("x: 2"))
+            self.assertIn("tile: 9", text)
+
     def test_api_manage_reads_engine_docs(self):
         import tempfile
         from pathlib import Path
