@@ -49,12 +49,16 @@
    "collection_manage"
    "collection_open"
    "collection_save"
+   "collectionfactory_manage"
+   "collectionproxy_manage"
+   "collisionobject_manage"
    "component_add"
    "component_manage"
    "display_profiles_manage"
    "editor_manage"
    "editor_preview"
    "editor_state"
+   "factory_manage"
    "filesystem_manage"
    "font_manage"
    "gamepads_manage"
@@ -65,6 +69,7 @@
    "input_binding_manage"
    "logs_read"
    "material_manage"
+   "model_manage"
    "particlefx_manage"
    "project_build"
    "project_manage"
@@ -915,6 +920,21 @@
 (defn- cmd-display-profiles-manage [ctx params]
   (cmd-file-domain-manage ctx params "display_profiles"))
 
+(defn- cmd-model-manage [ctx params]
+  (cmd-file-domain-manage ctx params "model"))
+
+(defn- cmd-factory-manage [ctx params]
+  (cmd-file-domain-manage ctx params "factory"))
+
+(defn- cmd-collectionfactory-manage [ctx params]
+  (cmd-file-domain-manage ctx params "collectionfactory"))
+
+(defn- cmd-collectionproxy-manage [ctx params]
+  (cmd-file-domain-manage ctx params "collectionproxy"))
+
+(defn- cmd-collisionobject-manage [ctx params]
+  (cmd-file-domain-manage ctx params "collisionobject"))
+
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
         component (or (optional-string params :component)
@@ -966,12 +986,16 @@
    "collection_manage" cmd-collection-manage
    "collection_open" cmd-collection-open
    "collection_save" cmd-collection-save
+   "collectionfactory_manage" cmd-collectionfactory-manage
+   "collectionproxy_manage" cmd-collectionproxy-manage
+   "collisionobject_manage" cmd-collisionobject-manage
    "component_add" cmd-component-add
    "component_manage" cmd-component-manage
    "display_profiles_manage" cmd-display-profiles-manage
    "editor_manage" cmd-editor-manage
    "editor_preview" cmd-editor-preview
    "editor_state" cmd-editor-state
+   "factory_manage" cmd-factory-manage
    "filesystem_manage" cmd-filesystem-manage
    "font_manage" cmd-font-manage
    "gamepads_manage" cmd-gamepads-manage
@@ -982,6 +1006,7 @@
    "input_binding_manage" cmd-input-binding-manage
    "logs_read" cmd-logs-read
    "material_manage" cmd-material-manage
+   "model_manage" cmd-model-manage
    "particlefx_manage" cmd-particlefx-manage
    "project_build" cmd-project-build
    "project_manage" cmd-project-manage

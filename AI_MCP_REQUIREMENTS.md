@@ -86,7 +86,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | L3 | 运行与生命周期 | `run --frames` 会退出；编辑器 Play 对 Agent 不透明 | 批跑 + 保活 + 停止 + 发现 target |
 | L4 | **运行时观察** | **几乎没有**（退出时一张图 + stdout，没有树） | **本阶段主需求：快照文件 + 查询。截屏只是其中一项** |
 | L5 | 运行时干预 | 明确未做 | R2 再评估；不阻塞 L4 |
-| L6 | 领域资源 | atlas / tilemap / tilesource / font / sound / gamepads / display_profiles / gui / input / particlefx / material / camera / render | 编辑器关着走磁盘；`undoable: false` |
+| L6 | 领域资源 | atlas / tilemap / tilesource / font / sound / gamepads / display_profiles / model / factory / collectionproxy / collisionobject / gui / input / particlefx / material / camera / render | 编辑器关着走磁盘；`undoable: false` |
 
 `AI_MCP.md` 把「运行时灌输入 / `game_eval` / debugger 截帧」整包标成不做。那是 L5。L4 **不是**同一件事。引擎里已经有只读观察通道，见 §7。
 

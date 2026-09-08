@@ -640,7 +640,7 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 
 - `runtime_diff`、MCP `defold://runtime/snapshot/{id}`
 - `runtime_state.targets` 多 target 列表（仍默认一个当前）
-- atlas / tilemap / tilesource / font / sound / gamepads / display_profiles / gui / input / particlefx / material / camera / render 的 manage
+- atlas / tilemap / tilesource / font / sound / gamepads / display_profiles / model / factory / collectionproxy / collisionobject / gui / input / particlefx / material / camera / render 的 manage
 - 磁盘回退：`collection_manage` / `gameobject_manage` / `component_add` / `script_attach`；stdio `--exclude-domains`
 - 不做 HTTP MCP；不做 custom tool 注册 / 签名更新
 

@@ -77,6 +77,11 @@ TOOLS = [
     ("sound_manage", "Create/get/list .sound files and set the sample."),
     ("gamepads_manage", "Create/get/list .gamepads driver maps."),
     ("display_profiles_manage", "Create/get/list display profile files."),
+    ("model_manage", "Create/get/list .model files and set the mesh."),
+    ("factory_manage", "Create/get/list game object factories."),
+    ("collectionfactory_manage", "Create/get/list collection factories."),
+    ("collectionproxy_manage", "Create/get/list collection proxies."),
+    ("collisionobject_manage", "Create/get/list collision object files."),
     ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
@@ -404,6 +409,81 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "limit": {"type": "integer"},
         },
     },
+    "model_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "mesh": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "factory_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "prototype": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "collectionfactory_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "prototype": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "collectionproxy_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "collection": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
+    "collisionobject_manage": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["op"],
+        "properties": {
+            "op": {"type": "string", "enum": ["create", "get", "list", "remove", "set_property"]},
+            "path": {"type": "string"},
+            "collision_shape": {"type": "string"},
+            "name": {"type": "string"},
+            "property": {"type": "string"},
+            "value": {},
+            "offset": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
     "collection_open": {
         "type": "object",
         "additionalProperties": False,
@@ -665,6 +745,12 @@ RESOURCE_TEMPLATES = [
         "mimeType": "application/json",
     },
     {
+        "uriTemplate": "defold://project/logs",
+        "name": "project-logs",
+        "description": "Editor console or engine.log tail, plus parsed issues.",
+        "mimeType": "application/json",
+    },
+    {
         "uriTemplate": "defold://ref/{query}",
         "name": "api-ref",
         "description": "Lua/API reference search.",
@@ -701,6 +787,11 @@ PROMPTS = [
         "name": "defold-loop",
         "description": "check then observe. No screenshot unless asked.",
         "arguments": [{"name": "frames", "required": False}],
+    },
+    {
+        "name": "defold-check",
+        "description": "Compile only, then read logs/issues. Never launch.",
+        "arguments": [],
     },
 ]
 
@@ -779,6 +870,12 @@ def list_mcp_resources(project: Path) -> List[Dict[str, Any]]:
             "name": "project-info",
             "mimeType": "application/json",
             "description": "Doctor and game.project.",
+        },
+        {
+            "uri": "defold://project/logs",
+            "name": "project-logs",
+            "mimeType": "application/json",
+            "description": "Console or engine.log tail.",
         },
     ]
     for path in sorted(project.rglob("*.collection")):
@@ -865,6 +962,8 @@ def read_mcp_resource(project: Path, uri: str, timeout: float) -> Dict[str, Any]
         return dispatch_command(project, "script_manage", {"op": "read", "path": path}, timeout)
     if segments[:2] == ["project", "info"] or uri.rstrip("/") == "defold://project/info":
         return dispatch_command(project, "project_doctor", {}, timeout)
+    if segments[:2] == ["project", "logs"] or uri.rstrip("/") == "defold://project/logs":
+        return dispatch_command(project, "logs_read", {"limit": 80}, timeout)
     if segments[:1] == ["ref"]:
         q = query.get("q") or query.get("query") or "/".join(segments[1:])
         return dispatch_command(project, "api_manage", {"op": "get", "q": q}, timeout)
@@ -887,6 +986,10 @@ def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         "defold-loop": (
             f"Call project_check / project_build (check only), then runtime_observe frames={frames}. "
             "Do not screenshot unless the user asks how it looks."
+        ),
+        "defold-check": (
+            "Call project_check (launched=false). Then logs_read source=all. "
+            "Fix issues[].resource using script_patch. Do not run or screenshot."
         ),
     }
     if name not in texts:

@@ -1020,10 +1020,14 @@ DISK_COMMANDS = [
     "collection_manage",
     "collection_open",
     "collection_save",
+    "collectionfactory_manage",
+    "collectionproxy_manage",
+    "collisionobject_manage",
     "component_add",
     "component_manage",
     "editor_manage",
     "editor_state",
+    "factory_manage",
     "filesystem_manage",
     "display_profiles_manage",
     "font_manage",
@@ -1034,6 +1038,7 @@ DISK_COMMANDS = [
     "gui_manage",
     "input_binding_manage",
     "material_manage",
+    "model_manage",
     "particlefx_manage",
     "project_build",
     "project_check",
@@ -1161,6 +1166,8 @@ def intercept_existing_http(
         end = total - offset
         start = max(end - limit, 0)
         sliced = lines[start:end] if end > 0 else []
+        from defold_agent import parse_log
+
         return ok_envelope(
             {
                 "lines": sliced,
@@ -1169,6 +1176,7 @@ def intercept_existing_http(
                 "limit": limit,
                 "truncated": start > 0,
                 "source": source,
+                "issues": parse_log("\n".join(sliced)),
             }
         )
     if command == "editor_preview":

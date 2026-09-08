@@ -276,6 +276,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("engine-log", result["data"]["source"])
             self.assertIn("truncated", result["data"])
             self.assertTrue(any("boom" in line for line in result["data"]["lines"]))
+            self.assertEqual("/main/a.script", result["data"]["issues"][0]["resource"])
 
     def test_editor_state_includes_engine(self):
         import tempfile
@@ -404,6 +405,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             uris = [item["uri"] for item in listed["result"]["resources"]]
             self.assertIn("defold://editor/state", uris)
             self.assertIn("defold://project/info", uris)
+            self.assertIn("defold://project/logs", uris)
             self.assertTrue(any(item.startswith("defold://collection/hierarchy") for item in uris))
             templates = handle_rpc({"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"}, project, 2)
             names = [item["name"] for item in templates["result"]["resourceTemplates"]]
@@ -417,6 +419,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("ok", body["status"])
             prompts = handle_rpc({"jsonrpc": "2.0", "id": 5, "method": "prompts/list"}, project, 2)
             self.assertTrue(any(item["name"] == "defold-observe" for item in prompts["result"]["prompts"]))
+            self.assertTrue(any(item["name"] == "defold-check" for item in prompts["result"]["prompts"]))
             prompt = handle_rpc(
                 {"jsonrpc": "2.0", "id": 6, "method": "prompts/get", "params": {"name": "defold-observe"}},
                 project,
@@ -801,6 +804,22 @@ class ToolQualityTest(unittest.TestCase):
                 project, "display_profiles_manage", {"op": "create", "path": "/builtins/display.display_profiles"}, 2
             )
             self.assertEqual("ok", profiles["status"])
+            factory = dispatch_command(
+                project,
+                "factory_manage",
+                {"op": "create", "path": "/main/box.factory", "prototype": "/main/cube.go"},
+                2,
+            )
+            self.assertEqual("ok", factory["status"])
+            got_factory = dispatch_command(project, "factory_manage", {"op": "get", "path": "/main/box.factory"}, 2)
+            self.assertEqual("/main/cube.go", got_factory["data"]["prototype"])
+            proxy = dispatch_command(
+                project,
+                "collectionproxy_manage",
+                {"op": "create", "path": "/main/level.collectionproxy", "collection": "/main/main.collection"},
+                2,
+            )
+            self.assertEqual("ok", proxy["status"])
 
     def test_logs_read_source_engine(self):
         import tempfile

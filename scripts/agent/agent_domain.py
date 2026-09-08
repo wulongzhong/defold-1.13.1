@@ -30,6 +30,11 @@ DOMAIN_EXT = {
     "render_manage": "render",
     "gamepads_manage": "gamepads",
     "display_profiles_manage": "display_profiles",
+    "model_manage": "model",
+    "factory_manage": "factory",
+    "collectionfactory_manage": "collectionfactory",
+    "collectionproxy_manage": "collectionproxy",
+    "collisionobject_manage": "collisionobject",
 }
 
 FALLBACK_TEMPLATES = {
@@ -109,6 +114,19 @@ FALLBACK_TEMPLATES = {
         "  }\n"
         "}\n"
     ),
+    "model": 'mesh: "{mesh}"\nname: "{name}"\n',
+    "factory": 'prototype: "{prototype}"\n',
+    "collectionfactory": 'prototype: "{prototype}"\n',
+    "collectionproxy": 'collection: "{collection}"\n',
+    "collisionobject": (
+        'collision_shape: "{collision_shape}"\n'
+        "type: COLLISION_OBJECT_TYPE_DYNAMIC\n"
+        "mass: 1.0\n"
+        "friction: 0.1\n"
+        "restitution: 0.5\n"
+        'group: "default"\n'
+        'mask: "default"\n'
+    ),
 }
 
 CAMERA_BLOCK = """
@@ -141,6 +159,10 @@ def load_template(ext: str, name: str, extras: Optional[Dict[str, str]] = None) 
                 .replace("{image}", extras.get("image", ""))
                 .replace("{font}", extras.get("font", "/builtins/fonts/vera_mo_bd.ttf"))
                 .replace("{sound}", extras.get("sound", ""))
+                .replace("{mesh}", extras.get("mesh", ""))
+                .replace("{prototype}", extras.get("prototype", ""))
+                .replace("{collection}", extras.get("collection", extras.get("tile_set", "")))
+                .replace("{collision_shape}", extras.get("collision_shape", ""))
             )
     text = FALLBACK_TEMPLATES[ext]
     return text.format(
@@ -149,6 +171,10 @@ def load_template(ext: str, name: str, extras: Optional[Dict[str, str]] = None) 
         image=extras.get("image", ""),
         font=extras.get("font", "/builtins/fonts/vera_mo_bd.ttf"),
         sound=extras.get("sound", ""),
+        mesh=extras.get("mesh", ""),
+        prototype=extras.get("prototype", ""),
+        collection=extras.get("collection", ""),
+        collision_shape=extras.get("collision_shape", ""),
     )
 
 
@@ -277,6 +303,17 @@ def summarize(command: str, path: str, text: str) -> Dict[str, Any]:
         data["devices"] = quoted(text, "device")
     elif command == "display_profiles_manage":
         data["profiles"] = quoted(text, "name")
+    elif command == "model_manage":
+        data["mesh"] = scalar(text, "mesh")
+        data["name"] = scalar(text, "name")
+    elif command in {"factory_manage", "collectionfactory_manage"}:
+        data["prototype"] = scalar(text, "prototype")
+    elif command == "collectionproxy_manage":
+        data["collection"] = scalar(text, "collection")
+    elif command == "collisionobject_manage":
+        data["collision_shape"] = scalar(text, "collision_shape")
+        data["group"] = scalar(text, "group")
+        data["type"] = scalar(text, "type")
     return data
 
 
@@ -308,9 +345,13 @@ def handle_file_domain(project: Path, command: str, params: Dict[str, Any]) -> D
                 "image": str(params.get("image") or ""),
                 "font": str(params.get("font") or "/builtins/fonts/vera_mo_bd.ttf"),
                 "sound": str(params.get("sound") or ""),
+                "mesh": str(params.get("mesh") or ""),
+                "prototype": str(params.get("prototype") or ""),
+                "collection": str(params.get("collection") or ""),
+                "collision_shape": str(params.get("collision_shape") or ""),
             }
             text = params.get("content") or load_template(ext, params.get("name") or _stem(path), extras)
-            for key in ("image", "font", "sound", "tile_set"):
+            for key in ("image", "font", "sound", "tile_set", "mesh", "prototype", "collection", "collision_shape"):
                 value = extras.get(key)
                 if value:
                     text = set_scalar(text, key, sanitize_proj_path(value) if key != "font" or value.startswith("/") else value)
