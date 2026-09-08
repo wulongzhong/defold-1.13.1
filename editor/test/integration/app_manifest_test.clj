@@ -1,0 +1,601 @@
+;; Copyright 2020-2026 The Defold Foundation
+;; Copyright 2014-2020 King
+;; Copyright 2009-2014 Ragnar Svensson, Christian Murray
+;; Licensed under the Defold License version 1.0 (the "License"); you may not use
+;; this file except in compliance with the License.
+;;
+;; You may obtain a copy of the License, together with FAQs at
+;; https://www.defold.com/license
+;;
+;; Unless required by applicable law or agreed to in writing, software distributed
+;; under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+;; CONDITIONS OF ANY KIND, either express or implied. See the License for the
+;; specific language governing permissions and limitations under the License.
+
+(ns integration.app-manifest-test
+  (:require [clojure.string :as string]
+            [clojure.test :refer :all]
+            [dynamo.graph :as g]
+            [editor.app-manifest :as app-manifest]
+            [editor.code.data :as data]
+            [integration.test-util :as test-util]))
+
+(deftest toggle-test
+  (testing "contains toggles"
+    (let [toggle (app-manifest/contains-toggle :common :libs "foo")]
+      (testing "get"
+        (is (true? (app-manifest/get-toggle-value {:platforms {:common {:context {:libs ["foo"]}}}} toggle)))
+        (is (false? (app-manifest/get-toggle-value {:platforms {:common {:context {:libs []}}}} toggle)))
+        (is (false? (app-manifest/get-toggle-value {:platforms {:common {:context {:libs "not-a-list"}}}} toggle)))
+        (is (false? (app-manifest/get-toggle-value {:platforms {:common "not-a-map"}} toggle)))
+        (is (false? (app-manifest/get-toggle-value ["not a map"] toggle))))
+      (testing "set"
+        (is (= {:platforms {:common {:context {:libs []}}}}
+               (app-manifest/set-toggle-value
+                 {:platforms {:common {:context {:libs ["foo"]}}}} toggle false)))
+        (is (= {:platforms {:common {:context {:libs ["don't touch this" "foo"]}}}}
+               (-> {:platforms {:common {:context {:libs ["foo" "don't touch this"]}}}}
+                   (app-manifest/set-toggle-value toggle false)
+                   (app-manifest/set-toggle-value toggle true))))
+        (is (= {:platforms {:common {:context {:libs ["foo"]}}}}
+               (app-manifest/set-toggle-value
+                 {:platforms {:common {:context {:libs "not-a-coll"}}}} toggle true)))
+        (is (= {:platforms {:common {:context {:libs []}}}}
+               (app-manifest/set-toggle-value {:platforms {:common :invalid}} toggle false)))))
+    (testing "windows library toggles read legacy and current names"
+      (let [lib-toggle (first (app-manifest/libs-toggles [:x86_64-win32] ["record_null"]))
+            exclude-lib-toggle (first (app-manifest/exclude-libs-toggles [:x86_64-win32] ["record"]))]
+        (is (true? (app-manifest/get-toggle-value
+                     {:platforms {:x86_64-win32 {:context {:libs ["record_null"]}}}}
+                     lib-toggle)))
+        (is (true? (app-manifest/get-toggle-value
+                     {:platforms {:x86_64-win32 {:context {:libs ["record_null.lib"]}}}}
+                     lib-toggle)))
+        (is (true? (app-manifest/get-toggle-value
+                     {:platforms {:x86_64-win32 {:context {:libs ["librecord_null.lib"]}}}}
+                     lib-toggle)))
+        (is (= {:platforms {:x86_64-win32 {:context {:libs ["record_null"]}}}}
+               (app-manifest/set-toggle-value
+                 {:platforms {:x86_64-win32 {:context {:libs []}}}}
+                 lib-toggle
+                 true)))
+        (is (= {:platforms {:x86_64-win32 {:context {:libs []}}}}
+               (app-manifest/set-toggle-value
+                 {:platforms {:x86_64-win32 {:context {:libs ["record_null" "record_null.lib" "librecord_null.lib"]}}}}
+                 lib-toggle
+                 false)))
+        (is (true? (app-manifest/get-toggle-value
+                     {:platforms {:x86_64-win32 {:context {:excludeLibs ["record"]}}}}
+                     exclude-lib-toggle)))
+        (is (true? (app-manifest/get-toggle-value
+                     {:platforms {:x86_64-win32 {:context {:excludeLibs ["librecord"]}}}}
+                     exclude-lib-toggle)))
+        (is (= {:platforms {:x86_64-win32 {:context {:excludeLibs []}}}}
+               (app-manifest/set-toggle-value
+                 {:platforms {:x86_64-win32 {:context {:excludeLibs ["record" "librecord"]}}}}
+                 exclude-lib-toggle
+                 false))))
+      (let [external-lib-toggle (first (app-manifest/libs-toggles [:x86_64-win32] ["box2d"]))]
+        (is (true? (app-manifest/get-toggle-value
+                     {:platforms {:x86_64-win32 {:context {:libs ["libbox2d.lib"]}}}}
+                     external-lib-toggle)))
+        (is (= {:platforms {:x86_64-win32 {:context {:libs ["libbox2d"]}}}}
+               (app-manifest/set-toggle-value
+                 {:platforms {:x86_64-win32 {:context {:libs []}}}}
+                 external-lib-toggle
+                 true))))))
+  (testing "boolean toggle"
+    (testing "get"
+      (testing "positive toggle (expects value to be true for toggle to be on)"
+        (let [toggle (app-manifest/boolean-toggle :common :enabled true)]
+          (is (true? (app-manifest/get-toggle-value {:platforms {:common {:context {:enabled true}}}} toggle)))
+          (is (false? (app-manifest/get-toggle-value {:platforms {:common {:context {:enabled false}}}} toggle)))
+          (is (false? (app-manifest/get-toggle-value {:platforms {:common {:context {:enabled "not-a-boolean"}}}} toggle)))
+          (is (false? (app-manifest/get-toggle-value {:platforms {:common "not-a-map"}} toggle)))))
+      (testing "negative toggle (expects value to be false for toggle to be on)"
+        (let [toggle (app-manifest/boolean-toggle :common :disabled false)]
+          (is (true? (app-manifest/get-toggle-value {:platforms {:common {:context {:disabled false}}}} toggle)))
+          (is (false? (app-manifest/get-toggle-value {:platforms {:common {:context {:disabled true}}}} toggle)))
+          (is (false? (app-manifest/get-toggle-value {:platforms {:common {:context {:disabled "not-a-boolean"}}}} toggle)))
+          (is (false? (app-manifest/get-toggle-value {:platforms "not-a-map"} toggle))))))
+    (testing "set"
+      (testing "positive toggle"
+        (let [toggle (app-manifest/boolean-toggle :common :enabled true)]
+          (is (= {:platforms {:common {:context {:enabled true}}}}
+                 (app-manifest/set-toggle-value {:platforms {:common {:context {:enabled false}}}} toggle true)))
+          (is (= {:platforms {:common {:context {:enabled false}}}}
+                 (app-manifest/set-toggle-value {:platforms {:common {:context {:enabled true}}}} toggle false)))
+          (is (= {:platforms {:common {:context {:enabled true}}}}
+                 (app-manifest/set-toggle-value {:platforms {:common "not-a-map"}} toggle true)))))
+      (testing "negative toggle"
+        (let [toggle (app-manifest/boolean-toggle :common :disabled false)]
+          (is (= {:platforms {:common {:context {:disabled false}}}}
+                 (app-manifest/set-toggle-value {:platforms {:common {:context {:disabled true}}}} toggle true)))
+          (is (= {:platforms {:common {:context {:disabled true}}}}
+                 (app-manifest/set-toggle-value {:platforms {:common {:context {:disabled false}}}} toggle false)))
+          (is (= {:platforms {:common {:context {:disabled false}}}}
+                 (app-manifest/set-toggle-value {:platforms {:common "not-a-map"}} toggle true))))))))
+
+(deftest setting-test
+  (testing "checkbox setting is boolean or nil (indeterminate) setting"
+    (let [setting (app-manifest/make-check-box-setting
+                    [(app-manifest/contains-toggle :desktop :libs "record")
+                     (app-manifest/contains-toggle :mobile :libs "record")])]
+      (testing "get"
+        (is (true? (app-manifest/get-setting-value
+                     {:platforms {:desktop {:context {:libs ["record"]}}
+                                  :mobile {:context {:libs ["record"]}}}}
+                     setting)))
+        (is (false? (app-manifest/get-setting-value
+                      {:platforms {:desktop {:context {:libs []}}
+                                   :mobile {:context {:libs []}}}}
+                      setting)))
+        (is (nil? (app-manifest/get-setting-value
+                    {:platforms {:desktop {:context {:libs ["record"]}}
+                                 :mobile {:context {:libs []}}}}
+                    setting))))
+      (testing "set"
+        (is (= {:platforms {:desktop {:context {:libs ["record"]}}
+                            :mobile {:context {:libs ["record"]}}}}
+               (app-manifest/set-setting-value :invalid setting true)))
+        (is (= {:platforms {:desktop {:context {:libs ["record"]}}
+                            :mobile {:context {:libs ["record"]}}}}
+               (app-manifest/set-setting-value
+                 {:platforms {:desktop {:context {:libs ["record"]}}
+                              :mobile {:context {:libs []}}}}
+                 setting
+                 true)))
+        (is (= {:platforms {:desktop {:context {:libs []}}
+                            :mobile {:context {:libs []}}}}
+               (app-manifest/set-setting-value :invalid setting false))))
+      (testing "update"
+        (is (= {:platforms {:desktop {:context {:libs ["record"]}}
+                            :mobile {:context {:libs ["record"]}}}}
+               (app-manifest/update-setting-value :invalid setting not)))
+        (is (= {:platforms {:desktop {:context {:libs []}}
+                            :mobile {:context {:libs []}}}}
+               (app-manifest/update-setting-value
+                 {:platforms {:desktop {:context {:libs ["record"]}}
+                              :mobile {:context {:libs ["record"]}}}}
+                 setting
+                 not)))
+        (testing "nil is treated as false"
+          (is (= {:platforms {:desktop {:context {:libs []}}
+                              :mobile {:context {:libs []}}}}
+                 (app-manifest/update-setting-value
+                   {:platforms {:desktop {:context {:libs ["record"]}}
+                                :mobile {:context {:libs []}}}}
+                   setting
+                   identity)))))))
+  (testing "choice setting is a enum of options or nil (indeterminate) setting"
+    (let [setting (app-manifest/make-choice-setting
+                    :all [(app-manifest/boolean-toggle :desktop :enabled true)
+                          (app-manifest/boolean-toggle :mobile :enabled true)
+                          (app-manifest/boolean-toggle :web :enabled true)]
+                    :desktop [(app-manifest/boolean-toggle :desktop :enabled true)]
+                    :mobile [(app-manifest/boolean-toggle :mobile :enabled true)]
+                    :none)]
+      (testing "get"
+        (is (= :all (app-manifest/get-setting-value
+                      {:platforms {:desktop {:context {:enabled true}}
+                                   :web {:context {:enabled true}}
+                                   :mobile {:context {:enabled true}}}}
+                      setting)))
+        (is (= :desktop (app-manifest/get-setting-value
+                          {:platforms {:desktop {:context {:enabled true}}
+                                       :mobile {:context {:enabled false}}}}
+                          setting)))
+        (is (= :mobile (app-manifest/get-setting-value
+                         {:platforms {:desktop "nope"
+                                      :mobile {:context {:enabled true}}}}
+                         setting)))
+        (is (= :none (app-manifest/get-setting-value
+                       {:platforms {:desktop {:context {:enabled false}}
+                                    :mobile {:context {:enabled false}}}}
+                       setting)))
+        (is (nil? (app-manifest/get-setting-value
+                    {:platforms {:web {:context {:enabled true}}}}
+                    setting))))
+      (testing "set"
+        (is (= {:platforms {:desktop {:context {:enabled true}}
+                            :mobile {:context {:enabled true}}
+                            :web {:context {:enabled true}}}}
+               (app-manifest/set-setting-value {} setting :all)))
+        (is (= :desktop (-> {}
+                            (app-manifest/set-setting-value setting :all)
+                            (app-manifest/set-setting-value setting :desktop)
+                            (app-manifest/get-setting-value setting))))
+        (is (= :none (-> {}
+                         (app-manifest/set-setting-value setting :all)
+                         (app-manifest/set-setting-value setting :none)
+                         (app-manifest/get-setting-value setting)))))
+      (testing "update"
+        (let [update-fn {:none :all
+                         :all :none
+                         :desktop :mobile
+                         :mobile :desktop}]
+          (doseq [v [:none :all :desktop :mobile]]
+            (is (= (update-fn v)
+                   (-> {}
+                       (app-manifest/set-setting-value setting v)
+                       (app-manifest/update-setting-value setting update-fn)
+                       (app-manifest/get-setting-value setting))))))))))
+
+(deftest android-graphics-setting-test
+  (testing "OpenGL-only Android excludes Vulkan link inputs"
+    (let [manifest (-> {}
+                       (app-manifest/set-setting-value app-manifest/graphics-setting-android :both)
+                       (app-manifest/set-setting-value app-manifest/graphics-setting-android :open-gl))]
+      (doseq [platform [:armv7-android :arm64-android]]
+        (let [context (get-in manifest [:platforms platform :context])]
+          (is (some #{"graphics_opengles"} (:libs context)))
+          (is (some #{"dmglfw"} (:libs context)))
+          (is (some #{"dmglfw_vulkan"} (:excludeLibs context)))
+          (is (not-any? #{"graphics"} (:libs context)))
+          (is (not-any? #{"vulkan"} (:excludeLibs context)))
+          (is (some #{"vulkan"} (:excludeDynamicLibs context)))
+          (is (not-any? #{"vulkan"} (:dynamicLibs context)))
+          (is (some #{"EGL"} (:dynamicLibs context)))
+          (is (some #{"GLESv2"} (:dynamicLibs context)))))))
+  (testing "Vulkan-only Android excludes OpenGL ES link inputs"
+    (let [manifest (app-manifest/set-setting-value {} app-manifest/graphics-setting-android :vulkan)]
+      (doseq [platform [:armv7-android :arm64-android]]
+        (let [context (get-in manifest [:platforms platform :context])]
+          (is (some #{"graphics_vulkan"} (:libs context)))
+          (is (some #{"dmglfw_vulkan"} (:libs context)))
+          (is (some #{"graphics_opengles"} (:excludeLibs context)))
+          (is (some #{"dmglfw"} (:excludeLibs context)))
+          (is (some #{"GraphicsAdapterOpenGLES"} (:excludeSymbols context)))
+          (is (some #{"vulkan"} (:excludeDynamicLibs context)))
+          (is (some #{"EGL"} (:excludeDynamicLibs context)))
+          (is (some #{"GLESv1_CM"} (:excludeDynamicLibs context)))
+          (is (some #{"GLESv2"} (:excludeDynamicLibs context))))))))
+
+(def apple-graphics-selections
+  [:open-gl :metal :vulkan :open-gl-metal :open-gl-vulkan])
+
+(deftest osx-graphics-setting-test
+  (testing "OSX supports every OpenGL/Metal/Vulkan selection"
+    (doseq [selection apple-graphics-selections]
+      (let [manifest (-> {}
+                         (app-manifest/set-setting-value app-manifest/graphics-setting-osx :metal)
+                         (app-manifest/set-setting-value app-manifest/graphics-setting-osx selection))]
+        (is (= selection (app-manifest/get-setting-value manifest app-manifest/graphics-setting-osx))))))
+  (testing "Metal-only OSX includes Metal and excludes OpenGL/Vulkan"
+    (let [manifest (app-manifest/set-setting-value {} app-manifest/graphics-setting-osx :metal)]
+      (is (= :metal (app-manifest/get-setting-value manifest app-manifest/graphics-setting-osx)))
+      (doseq [platform [:arm64-osx :x86_64-osx]]
+        (let [context (get-in manifest [:platforms platform :context])]
+          (is (some #{"graphics_metal"} (:libs context)))
+          (is (some #{"platform"} (:engineLibs context)))
+          (is (some #{"GraphicsAdapterMetal"} (:symbols context)))
+          (is (some #{"Metal"} (:frameworks context)))
+          (is (some #{"IOSurface"} (:frameworks context)))
+          (is (some #{"QuartzCore"} (:frameworks context)))
+          (is (some #{"graphics"} (:excludeLibs context)))
+          (is (not-any? #{"platform"} (:excludeLibs context)))
+          (is (some #{"graphics_vulkan"} (:excludeLibs context)))
+          (is (some #{"platform_vulkan"} (:excludeLibs context)))
+          (is (some #{"MoltenVK"} (:excludeLibs context)))
+          (is (some #{"GraphicsAdapterOpenGL"} (:excludeSymbols context)))
+          (is (some #{"GraphicsAdapterVulkan"} (:excludeSymbols context)))))))
+  (testing "Metal-only OSX removes stale explicit Vulkan link inputs"
+    (let [explicit-vulkan-manifest {:platforms {:arm64-osx {:context {:excludeLibs ["graphics" "platform"]
+                                                                      :excludeSymbols ["GraphicsAdapterOpenGL"]
+                                                                      :symbols ["GraphicsAdapterVulkan"]
+                                                                      :libs ["graphics_vulkan" "platform_vulkan" "MoltenVK"]
+                                                                      :frameworks ["Metal" "IOSurface" "QuartzCore"]}}
+                                                :x86_64-osx {:context {:excludeLibs ["graphics" "platform"]
+                                                                       :excludeSymbols ["GraphicsAdapterOpenGL"]
+                                                                       :symbols ["GraphicsAdapterVulkan"]
+                                                                       :libs ["graphics_vulkan" "platform_vulkan" "MoltenVK"]
+                                                                       :frameworks ["Metal" "IOSurface" "QuartzCore"]}}}}
+          manifest (app-manifest/set-setting-value explicit-vulkan-manifest app-manifest/graphics-setting-osx :metal)]
+      (is (= :metal (app-manifest/get-setting-value manifest app-manifest/graphics-setting-osx)))
+      (doseq [platform [:arm64-osx :x86_64-osx]]
+        (let [context (get-in manifest [:platforms platform :context])]
+          (is (some #{"graphics_metal"} (:libs context)))
+          (is (some #{"platform"} (:engineLibs context)))
+          (is (not-any? #{"graphics_vulkan"} (:libs context)))
+          (is (not-any? #{"platform_vulkan"} (:libs context)))
+          (is (not-any? #{"MoltenVK"} (:libs context)))
+          (is (some #{"GraphicsAdapterMetal"} (:symbols context)))
+          (is (not-any? #{"GraphicsAdapterVulkan"} (:symbols context)))))))
+  (testing "OSX selections without Metal do not keep Metal leftovers"
+    (doseq [selection [:open-gl :open-gl-vulkan :vulkan]]
+      (let [manifest (-> {}
+                         (app-manifest/set-setting-value app-manifest/graphics-setting-osx :metal)
+                         (app-manifest/set-setting-value app-manifest/graphics-setting-osx selection))]
+        (is (= selection (app-manifest/get-setting-value manifest app-manifest/graphics-setting-osx)))
+        (doseq [platform [:arm64-osx :x86_64-osx]]
+          (let [context (get-in manifest [:platforms platform :context])]
+            (is (not-any? #{"graphics_metal"} (:libs context)))
+            (is (not-any? #{"GraphicsAdapterMetal"} (:symbols context)))))))))
+
+(deftest ios-graphics-setting-test
+  (testing "iOS supports every OpenGL/Metal/Vulkan selection"
+    (doseq [selection apple-graphics-selections]
+      (let [manifest (-> {}
+                         (app-manifest/set-setting-value app-manifest/graphics-setting-ios :metal)
+                         (app-manifest/set-setting-value app-manifest/graphics-setting-ios selection))]
+        (is (= selection (app-manifest/get-setting-value manifest app-manifest/graphics-setting-ios))))))
+  (testing "Metal-only iOS includes Metal and excludes OpenGL/Vulkan"
+    (let [manifest (app-manifest/set-setting-value {} app-manifest/graphics-setting-ios :metal)]
+      (is (= :metal (app-manifest/get-setting-value manifest app-manifest/graphics-setting-ios)))
+      (doseq [platform [:arm64-ios :x86_64-ios]]
+        (let [context (get-in manifest [:platforms platform :context])]
+          (is (some #{"graphics_metal"} (:libs context)))
+          (is (some #{"GraphicsAdapterMetal"} (:symbols context)))
+          (is (some #{"Metal"} (:frameworks context)))
+          (is (some #{"IOSurface"} (:frameworks context)))
+          (is (some #{"QuartzCore"} (:frameworks context)))))
+      (let [context (get-in manifest [:platforms :arm64-ios :context])]
+        (is (some #{"graphics"} (:excludeLibs context)))
+        (is (some #{"graphics_vulkan"} (:excludeLibs context)))
+        (is (some #{"MoltenVK"} (:excludeLibs context)))
+        (is (some #{"GraphicsAdapterOpenGL"} (:excludeSymbols context)))
+        (is (some #{"GraphicsAdapterVulkan"} (:excludeSymbols context))))))
+  (testing "Vulkan-only iOS keeps the simulator OpenGL fallback"
+    (let [manifest (app-manifest/set-setting-value {} app-manifest/graphics-setting-ios :vulkan)
+          arm64-context (get-in manifest [:platforms :arm64-ios :context])
+          simulator-context (get-in manifest [:platforms :x86_64-ios :context])]
+      (is (= :vulkan (app-manifest/get-setting-value manifest app-manifest/graphics-setting-ios)))
+      (is (some #{"graphics_vulkan"} (:libs arm64-context)))
+      (is (some #{"MoltenVK"} (:libs arm64-context)))
+      (is (some #{"GraphicsAdapterVulkan"} (:symbols arm64-context)))
+      (is (some #{"graphics"} (:excludeLibs arm64-context)))
+      (is (some #{"GraphicsAdapterOpenGL"} (:excludeSymbols arm64-context)))
+      (is (not-any? #{"graphics"} (:excludeLibs simulator-context)))
+      (is (not-any? #{"GraphicsAdapterOpenGL"} (:excludeSymbols simulator-context)))
+      (is (not-any? #{"graphics_vulkan"} (:libs simulator-context)))
+      (is (not-any? #{"GraphicsAdapterVulkan"} (:symbols simulator-context)))
+      (is (not-any? #{"graphics_metal"} (:libs simulator-context)))
+      (is (not-any? #{"GraphicsAdapterMetal"} (:symbols simulator-context)))))
+  (testing "Generic graphics changes do not clear iOS graphics"
+    (let [manifest (-> {}
+                       (app-manifest/set-setting-value app-manifest/graphics-setting-ios :metal)
+                       (app-manifest/set-setting-value app-manifest/graphics-setting :open-gl))]
+      (is (= :open-gl (app-manifest/get-setting-value manifest app-manifest/graphics-setting)))
+      (is (= :metal (app-manifest/get-setting-value manifest app-manifest/graphics-setting-ios)))))
+  (testing "iOS graphics changes do not clear generic graphics"
+    (doseq [selection [:metal :vulkan :open-gl-metal :open-gl-vulkan]]
+      (let [manifest (-> {}
+                         (app-manifest/set-setting-value app-manifest/graphics-setting :open-gl)
+                         (app-manifest/set-setting-value app-manifest/graphics-setting-ios selection))]
+        (is (= :open-gl (app-manifest/get-setting-value manifest app-manifest/graphics-setting)))
+        (is (= selection (app-manifest/get-setting-value manifest app-manifest/graphics-setting-ios)))))))
+
+(deftest manifestation-compatibility-test
+  (test-util/with-loaded-project
+    (testing "/app_manifest/default.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/default.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :open-gl (g/node-value manifest :graphics-ios)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/exclude_physics_2d.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/exclude_physics_2d.appmanifest")]
+        (is (= :none (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/exclude_physics_3d.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/exclude_physics_3d.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= false (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/exclude_physics.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/exclude_physics.appmanifest")]
+        (is (= :none (g/node-value manifest :physics-2d)))
+        (is (= false (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/physics_2d_box2dv3.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/physics_2d_box2dv3.appmanifest")]
+        (is (= :v3 (g/node-value manifest :physics-2d)))
+        (is (= false (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/physics_box2dv3_3d.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/physics_box2dv3_3d.appmanifest")]
+        (is (= :v3 (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/exclude_many.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/exclude_many.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= true (g/node-value manifest :exclude-record)))
+        (is (= :none (g/node-value manifest :profiler)))
+        (is (= true (g/node-value manifest :exclude-sound)))
+        (is (= true (g/node-value manifest :exclude-input)))
+        (is (= true (g/node-value manifest :exclude-liveupdate)))
+        (is (= true (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/vulkan.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/vulkan.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :vulkan (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :vulkan (g/node-value manifest :graphics-ios)))
+        (is (= :vulkan (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/vulkan_and_opengl.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/vulkan_and_opengl.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :both (g/node-value manifest :graphics)))
+        (is (nil? (g/node-value manifest :graphics-osx)))
+        (is (nil? (g/node-value manifest :graphics-ios)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/opengl_osx.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/opengl_osx.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :open-gl (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/vulkan_and_opengl_osx.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/vulkan_and_opengl_osx.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :open-gl-vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/metal_osx.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/metal_osx.appmanifest")]
+        (is (= :metal (g/node-value manifest :graphics-osx)))))
+    (testing "/app_manifest/metal_ios.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/metal_ios.appmanifest")]
+        (is (= :metal (g/node-value manifest :graphics-ios)))))
+    (testing "/app_manifest/webgpu.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/webgpu.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gpu (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/webgpu_and_webgl.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/webgpu_and_webgl.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= false (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :both (g/node-value manifest :graphics-web)))))
+    (testing "/app_manifest/android_support.appmanifest"
+      (let [manifest (test-util/resource-node project "/app_manifest/android_support.appmanifest")]
+        (is (= :legacy (g/node-value manifest :physics-2d)))
+        (is (= true (g/node-value manifest :physics-3d)))
+        (is (= false (g/node-value manifest :exclude-record)))
+        (is (= :debug-only (g/node-value manifest :profiler)))
+        (is (= false (g/node-value manifest :exclude-sound)))
+        (is (= false (g/node-value manifest :exclude-input)))
+        (is (= false (g/node-value manifest :exclude-liveupdate)))
+        (is (= false (g/node-value manifest :exclude-basis-transcoder)))
+        (is (= true (g/node-value manifest :use-android-support-lib)))
+        (is (= :open-gl (g/node-value manifest :graphics)))
+        (is (= :vulkan (g/node-value manifest :graphics-osx)))
+        (is (= :both (g/node-value manifest :graphics-android)))
+        (is (= :web-gl (g/node-value manifest :graphics-web)))))))
+
+(deftest modification-test
+  (test-util/with-loaded-project
+    (let [manifest (test-util/resource-node project "/app_manifest/default.appmanifest")
+          text #(slurp (data/lines-reader (g/node-value manifest :modified-lines)))]
+      (is (false? (string/includes? (text) "record_null")))
+      (is (false? (g/node-value manifest :exclude-record)))
+      (g/set-property! manifest :exclude-record true)
+      (is (string/includes? (text) "record_null"))
+      (is (true? (g/node-value manifest :exclude-record)))
+      (g/set-property! manifest :exclude-record false)
+      (is (false? (string/includes? (text) "record_null")))
+      (is (false? (g/node-value manifest :exclude-record))))))
