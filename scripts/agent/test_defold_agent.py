@@ -559,6 +559,108 @@ class ToolQualityTest(unittest.TestCase):
             self.assertTrue(failed["error"]["data"]["rolled_back"])
             self.assertEqual(1, failed["error"]["data"]["failed_index"])
             self.assertFalse((project / "main" / "b.script").is_file())
+            from agent_ops import batch_uses_editor
+
+            self.assertFalse(batch_uses_editor(project, [{"command": "script_create", "params": {"path": "/main/c.script"}}]))
+            internal = project / ".internal"
+            internal.mkdir(parents=True, exist_ok=True)
+            (internal / "editor.port").write_text("59999", encoding="utf-8")
+            (internal / "editor.token").write_text("tok", encoding="utf-8")
+            self.assertTrue(
+                batch_uses_editor(project, [{"command": "script_create", "params": {"path": "/main/c.script"}}])
+            )
+            self.assertFalse(
+                batch_uses_editor(
+                    project,
+                    [
+                        {"command": "script_create", "params": {"path": "/main/c.script"}},
+                        {"command": "runtime_observe", "params": {}},
+                    ],
+                )
+            )
+
+    def test_session_list_and_activate(self):
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+
+        from agent_runtime import write_engine_record
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            session_dir = project / ".internal" / "agent"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            (session_dir / "session.json").write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "session_id": "demo@abcd1234",
+                        "project_path": str(project),
+                        "editor_url": "http://127.0.0.1:59999",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            write_engine_record(project, {"pid": os.getpid(), "mode": "live", "url": "http://127.0.0.1:8001"})
+            listed = dispatch_command(project, "session_manage", {"op": "list"}, 1)
+            self.assertEqual("ok", listed["status"])
+            kinds = {item["kind"] for item in listed["data"]["sessions"]}
+            self.assertIn("editor", kinds)
+            self.assertIn("cli-live", kinds)
+            pinned = dispatch_command(project, "session_activate", {"id": "demo@abcd1234"}, 1)
+            self.assertEqual("ok", pinned["status"])
+            self.assertEqual("editor", pinned["data"]["session"]["kind"])
+            missing = dispatch_command(project, "session_activate", {"id": "no-such-session"}, 1)
+            self.assertEqual("error", missing["status"])
+            self.assertEqual("UNKNOWN_TARGET", missing["error"]["code"])
+            unknown_op = dispatch_command(project, "session_manage", {"op": "switch"}, 1)
+            self.assertEqual("error", unknown_op["status"])
+            self.assertEqual("UNKNOWN_OP", unknown_op["error"]["code"])
+
+    def test_session_other_editor_cannot_activate(self):
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+
+        previous = os.environ.get("DEFOLD_AGENT_SESSIONS_DIR")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "here"
+            other = root / "other"
+            project.mkdir()
+            other.mkdir()
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            registry = root / "sessions"
+            registry.mkdir()
+            os.environ["DEFOLD_AGENT_SESSIONS_DIR"] = str(registry)
+            try:
+                (registry / "other@deadbeef.json").write_text(
+                    json.dumps(
+                        {
+                            "schema": 1,
+                            "session_id": "other@deadbeef",
+                            "project_path": str(other),
+                            "editor_url": "http://127.0.0.1:58888",
+                            "editor_pid": os.getpid(),
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                listed = dispatch_command(project, "session_manage", {"op": "list"}, 1)
+                self.assertEqual("ok", listed["status"])
+                kinds = {item["kind"] for item in listed["data"]["sessions"]}
+                self.assertIn("other-editor", kinds)
+                blocked = dispatch_command(project, "session_activate", {"id": "other@deadbeef"}, 1)
+                self.assertEqual("error", blocked["status"])
+                self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+            finally:
+                if previous is None:
+                    os.environ.pop("DEFOLD_AGENT_SESSIONS_DIR", None)
+                else:
+                    os.environ["DEFOLD_AGENT_SESSIONS_DIR"] = previous
 
     def test_project_doctor_lists_ready_flags(self):
         import tempfile

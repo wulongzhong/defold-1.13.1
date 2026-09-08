@@ -35,7 +35,7 @@ TOOLS = [
     ("editor_state", "Open editor or disk snapshot: version, title, current resource, readiness."),
     ("collection_get_hierarchy", "Authoring collection tree. params: path."),
     ("gameobject_get_properties", "Authoring GO or component properties. params: collection, id, optional component."),
-    ("session_activate", "Pin a runtime target url, or no-op when the editor is closed."),
+    ("session_activate", "Pin a session by id or url: this project's editor, CLI live engine, or a runtime target."),
     ("project_doctor", "Report bob / dmengine / editor / java readiness. Same as CLI doctor."),
     ("collection_open", "Resolve and open a collection in the editor."),
     ("collection_save", "Write the collection save data to disk."),
@@ -49,7 +49,7 @@ TOOLS = [
     ("logs_read", "Read editor console, engine.log, or editor2 log. Filter with source, severity, domain, q. Includes prints and stacks."),
     ("diagnostics_read", "Merge last project_check, parsed logs, and latest snapshot issues. Does not rebuild."),
     ("editor_preview", "Authoring preview PNG via GET /preview/{path}. Not a runtime screenshot."),
-    ("batch_execute", "Run commands[]. Editor closed: one disk rollback (atomic=true). Editor open: sequential graph edits (atomic=false)."),
+    ("batch_execute", "Run commands[]. Disk or open-editor authoring is one undo/rollback (atomic=true). Mixed runtime steps stay sequential (atomic=false)."),
     ("collection_manage", "op: create | add_instance | remove_instance | get_roots"),
     ("gameobject_manage", "op: delete | rename | set_property | find"),
     ("component_manage", "op: remove | set_property"),
@@ -57,7 +57,7 @@ TOOLS = [
     ("filesystem_manage", "op: read_text | write_text | list | exists | mkdir | copy | move | delete | search. Do not read or delete snapshot JSON."),
     ("project_manage", "op: settings_get | settings_set | stop | hot_reload"),
     ("editor_manage", "op: state | selection_get | quit | mcp_config"),
-    ("session_manage", "op: list"),
+    ("session_manage", "op: list — this project's editor, CLI live engine, runtime targets, and other open editors."),
     ("api_manage", "op: get — editor GET /ref, or engine /*# docs when the editor is closed."),
     ("runtime_observe", "Write a scene_graph snapshot file and return a summary. Uses the live engine if project_run is up; otherwise a batch run. Default does not screenshot."),
     ("runtime_snapshot_query", "Read a precise slice from a snapshot file. Engine may already be dead."),
@@ -210,7 +210,8 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "url": {"type": "string", "description": "Pin a discovered runtime target. Omit for the editor no-op."},
+            "id": {"type": "string", "description": "Session id from session_manage list (editor, cli-live, ...)."},
+            "url": {"type": "string", "description": "Pin a discovered runtime target url."},
         },
     },
     "project_doctor": {
@@ -1193,7 +1194,7 @@ def prompt_messages(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             f"Edit {collection} on disk. Create or parent id={go_id} with gameobject_create "
             "(parent/position/rotation/scale work without the editor). Use tilemap_manage set_tile and "
             "gui_manage set_node for tiles and HUD. Look up Lua with api_manage. "
-            "batch_execute is atomic on disk. Do not use an HTTP MCP URL. Do not screenshot."
+            "batch_execute is one rollback for authoring (disk or open editor). Do not use an HTTP MCP URL. Do not screenshot."
         ),
         "defold-check": (
             "Call project_check (launched=false). Then diagnostics_read. "

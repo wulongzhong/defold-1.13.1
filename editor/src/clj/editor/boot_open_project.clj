@@ -249,6 +249,7 @@
           token-file (doto (io/file project-path ".internal" "editor.token")
                        (io/make-parents)
                        (spit token))]
+      (agent/write-session-files! (io/file project-path) port-file-content token)
       (localization/localize! (.lookup root "#assets-pane") localization (localization/message "pane.assets"))
       (localization/localize! (.lookup root "#changed-files-titled-pane") localization (localization/message "pane.changed-files"))
       (localization/localize! (.lookup root "#status-label") localization (localization/message "progress.ready"))
@@ -267,7 +268,8 @@
             (when (and (.exists port-file) (= port-file-content (slurp port-file)))
               (.delete port-file))
             (when (and (.exists token-file) (= token (slurp token-file)))
-              (.delete token-file)))))
+              (.delete token-file))
+            (agent/delete-session-files! (io/file project-path) port-file-content)))))
       (.addEventFilter ^StackPane (.lookup root "#overlay") MouseEvent/ANY ui/ignore-event-filter)
       (ui/add-application-focused-callback! :main-stage app-view/handle-application-focused! app-view changes-view workspace prefs)
       (ui/add-application-unfocused-callback! :main-stage-unfocused app-view/handle-application-unfocused! app-view changes-view project prefs)

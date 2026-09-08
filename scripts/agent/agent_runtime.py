@@ -26,6 +26,8 @@ SNAPSHOT_SCHEMA = 1
 SNAPSHOTS_DIR = Path(".internal") / "agent" / "snapshots"
 ENGINE_JSON = Path(".internal") / "agent" / "engine.json"
 TARGET_JSON = Path(".internal") / "agent" / "target.json"
+SESSION_JSON = Path(".internal") / "agent" / "session.json"
+SESSION_PIN = Path(".internal") / "agent" / "session_pin.json"
 CONTROL_DIR = Path(".internal") / "agent" / "control"
 ENGINE_LOG = Path(".internal") / "agent" / "engine.log"
 DUMP_WAIT_SEC = 8.0
@@ -1006,19 +1008,152 @@ def list_targets(project: Path) -> List[Dict[str, Any]]:
 
 
 def activate_target(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
-    url = params.get("url")
-    if not url:
-        return error_envelope("MISSING_PARAM", "session_activate needs url to pin a runtime target")
-    targets = list_targets(project)
-    match = next((item for item in targets if item.get("url") == url), None)
+    return activate_session(project, params)
+
+
+def user_session_dir() -> Path:
+    override = os.environ.get("DEFOLD_AGENT_SESSIONS_DIR")
+    if override:
+        return Path(override)
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        return Path(local) / "Defold" / "agent" / "sessions"
+    home = Path.home()
+    mac = home / "Library" / "Application Support" / "Defold"
+    if mac.is_dir():
+        return mac / "agent" / "sessions"
+    return home / ".Defold" / "agent" / "sessions"
+
+
+def read_json_file(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_session_pin(project: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
+    dest = project / SESSION_PIN
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
+def list_other_editor_sessions(project: Path) -> List[Dict[str, Any]]:
+    directory = user_session_dir()
+    if not directory.is_dir():
+        return []
+    here = str(project.resolve())
+    others: List[Dict[str, Any]] = []
+    for path in sorted(directory.glob("*.json")):
+        data = read_json_file(path)
+        if not data:
+            continue
+        other_project = str(Path(str(data.get("project_path") or "")).resolve()) if data.get("project_path") else ""
+        if other_project == here:
+            continue
+        pid = int(data["editor_pid"]) if data.get("editor_pid") else 0
+        others.append(
+            {
+                "id": data.get("session_id") or path.stem,
+                "kind": "other-editor",
+                "url": data.get("editor_url"),
+                "project": data.get("project_path"),
+                "pid": pid or None,
+                "alive": pid_alive(pid) if pid else True,
+                "current": False,
+                "source": "registry",
+            }
+        )
+    return others
+
+
+def session_list_payload(project: Path) -> Dict[str, Any]:
+    from agent_ops import read_editor_endpoint
+
+    sessions: List[Dict[str, Any]] = []
+    pin = read_json_file(project / SESSION_PIN) or {}
+    editor = read_editor_endpoint(project)
+    recorded = read_json_file(project / SESSION_JSON) or {}
+    if editor or recorded:
+        url = (editor[0] if editor else None) or recorded.get("editor_url")
+        sessions.append(
+            {
+                "id": recorded.get("session_id") or "editor",
+                "kind": "editor",
+                "url": url,
+                "project": recorded.get("project_path") or str(project),
+                "pid": recorded.get("editor_pid"),
+                "alive": editor is not None,
+                "source": "editor",
+            }
+        )
+    for target in list_targets(project):
+        sessions.append(
+            {
+                "id": target.get("kind") or target.get("url") or "runtime",
+                "kind": target.get("kind") or "runtime",
+                "url": target.get("url"),
+                "pid": target.get("pid"),
+                "alive": bool(target.get("alive")),
+                "source": "runtime",
+            }
+        )
+    sessions.extend(list_other_editor_sessions(project))
+    current_id = pin.get("id")
+    current = None
+    if current_id:
+        current = next((item for item in sessions if item.get("id") == current_id), None)
+    if current is None:
+        current = next((item for item in sessions if item.get("kind") == "cli-live" and item.get("alive")), None)
+    if current is None:
+        current = next((item for item in sessions if item.get("kind") == "editor" and item.get("alive")), None)
+    if current is None and sessions:
+        current = next((item for item in sessions if item.get("kind") != "other-editor"), sessions[0])
+    for item in sessions:
+        item["current"] = item is current
+    return ok_envelope({"sessions": sessions, "source": "session"})
+
+
+def activate_session(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
+    wanted = params.get("id") or params.get("url")
+    listed = session_list_payload(project)
+    sessions = (listed.get("data") or {}).get("sessions") or []
+    if not wanted:
+        current = next((item for item in sessions if item.get("current")), None)
+        if current is None:
+            return ok_envelope({"activated": True, "sessions": sessions, "source": "session"})
+        wanted = current.get("id")
+    match = next(
+        (
+            item
+            for item in sessions
+            if item.get("id") == wanted or item.get("url") == wanted
+        ),
+        None,
+    )
     if match is None:
         return error_envelope(
             "UNKNOWN_TARGET",
-            f"Target url is not in the discovered list: {url}",
-            "Call runtime_state and pass one of data.targets[].url.",
+            f"Session is not in the discovered list: {wanted}",
+            "Call session_manage op=list.",
         )
-    write_pinned_target(project, {"url": url, "captured_at": utc_now()})
-    return ok_envelope({"activated": True, "url": url, "target": match, "source": "runtime"})
+    if match.get("kind") == "other-editor":
+        return error_envelope(
+            "NOT_ALLOWED",
+            "That editor belongs to another project.",
+            "Start a stdio MCP with --project pointing at that project.",
+        )
+    write_session_pin(
+        project,
+        {"id": match.get("id"), "url": match.get("url"), "kind": match.get("kind"), "captured_at": utc_now()},
+    )
+    if match.get("url") and match.get("kind") != "editor":
+        write_pinned_target(project, {"url": match.get("url"), "captured_at": utc_now()})
+    return ok_envelope({"activated": True, "session": match, "source": "session"})
 
 
 def runtime_screenshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:

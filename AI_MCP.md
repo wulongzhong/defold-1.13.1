@@ -417,9 +417,9 @@ editor.save()
 | 图变异 | `collection/add-embedded-game-object!`、`game-object/add-*-component!`、`g/transact` |
 | CLI / stdio MCP | `scripts/agent/defold_agent.py`、`agent_ops.py`、`agent_mcp.py` |
 | 错误码 | 信封 `{status, readiness, error.code}`，业务失败 HTTP 200 |
-| session | 单编辑器；关着编辑器时 `readiness: no_editor` |
+| session | `.internal/agent/session.json` + 用户级 registry；`session_manage list` 列本工程编辑器 / CLI live / 其它已开编辑器 |
 
-`batch_execute`：编辑器关着时磁盘写入会记账，失败整笔回滚（`atomic: true`）。编辑器开着时仍是逐步图事务，回包 `atomic: false`。
+`batch_execute`：纯作者态时整笔回滚（磁盘 journal，或编辑器开着时同一 `operation-sequence` + 失败 `g/undo!`），回包 `atomic: true`。混有 runtime/check/log 时仍逐步执行，回包 `atomic: false`。
 
 ---
 

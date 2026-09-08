@@ -1501,9 +1501,13 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 suggestions=["settings_get", "settings_set", "stop", "hot_reload"],
             )
         if command == "session_activate":
-            return ok_envelope({"activated": True, "sessions": 0, "source": "disk"}, readiness="no_editor")
-        if command == "session_manage" and params.get("op") == "list":
-            return ok_envelope({"sessions": []}, readiness="no_editor")
+            from agent_runtime import activate_session
+
+            return activate_session(project, params)
+        if command == "session_manage":
+            from agent_runtime import session_list_payload
+
+            return session_list_payload(project)
         if command == "api_manage":
             from agent_docs import search_script_docs
 
@@ -1584,10 +1588,46 @@ DISK_COMMANDS = [
 ]
 
 
+BATCH_KEEP_LOCAL = {
+    "diagnostics_read",
+    "doctor",
+    "editor_preview",
+    "logs_read",
+    "project_build",
+    "project_check",
+    "project_doctor",
+    "project_run",
+    "project_stop",
+    "runtime_diff",
+    "runtime_get_hierarchy",
+    "runtime_get_properties",
+    "runtime_observe",
+    "runtime_screenshot",
+    "runtime_snapshot_query",
+    "runtime_state",
+}
+
+
+def batch_uses_editor(project: Path, commands: List[Any]) -> bool:
+    if read_editor_endpoint(project) is None:
+        return False
+    for item in commands:
+        if not isinstance(item, dict):
+            return False
+        name, _params = apply_alias(item.get("command"), item.get("params") or {})
+        if not name or name in BATCH_KEEP_LOCAL or name == "batch_execute":
+            return False
+    return True
+
+
 def batch_execute_commands(project: Path, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
     commands = params.get("commands")
     if not isinstance(commands, list):
         return error_envelope("MISSING_PARAM", "batch_execute needs commands[]")
+    if batch_uses_editor(project, commands):
+        result = editor_command(project, "batch_execute", params, timeout)
+        if result is not None:
+            return result
     editor_open = read_editor_endpoint(project) is not None
     atomic = not editor_open
     journal = WriteJournal() if atomic else None
@@ -2012,10 +2052,18 @@ def dispatch_command(
             return overlay_readiness(project, stop_live_engine(project))
     if command == "batch_execute":
         return batch_execute_commands(project, params, timeout)
-    if command == "session_activate" and params.get("url"):
-        from agent_runtime import activate_target
+    if command in {"session_activate", "session_manage"}:
+        from agent_runtime import activate_session, session_list_payload
 
-        return activate_target(project, params)
+        if command == "session_manage":
+            op = params.get("op") or "list"
+            if op != "list":
+                return overlay_readiness(
+                    project,
+                    error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=["list"]),
+                )
+            return overlay_readiness(project, session_list_payload(project))
+        return overlay_readiness(project, activate_session(project, params))
     if command in RUNTIME_COMMANDS:
         return handle_runtime_command(project, command, params, timeout)
     from agent_domain import DOMAIN_COMMANDS, handle_domain_command

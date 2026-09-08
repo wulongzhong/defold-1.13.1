@@ -37,6 +37,10 @@
 
 (set! *warn-on-reflection* true)
 
+(def ^:dynamic *current-operation-sequence*
+  "When bound, every `transact` is tagged with this sequence label so successive
+  transactions coalesce into one undo point. Used by agent `batch_execute`.")
+
 (namespaces/import-vars [internal.graph.types node-id->graph-id node->graph-id sources targets connected? dependencies Node node-id node-id? produce-value node-by-id-at endpoint endpoint-node-id endpoint-label])
 
 (namespaces/import-vars [internal.graph.error-values ->error error-aggregate error-fatal error-fatal? error-info error-info? error-message error-package? error-warning error-warning? error-value? error? flatten-errors map->error package-errors precluding-errors unpack-errors worse-than package-if-error])
@@ -364,7 +368,10 @@
    ;; steps, we flatten and realize the lazy sequence outside the
    ;; do-strict-evaluation-context-scope-body block to avoid false positives
    ;; when strict evaluation-context scope checks are enabled.
-   (let [txs (cond-> txs strict-evaluation-context-scopes eager-tx-data)
+   (let [txs (if *current-operation-sequence*
+               (concat (it/sequence-label *current-operation-sequence*) txs)
+               txs)
+         txs (cond-> txs strict-evaluation-context-scopes eager-tx-data)
          transaction-context (make-transaction-context opts)
          tx-result (do-strict-evaluation-context-scope-body
                      (it/transact* transaction-context txs))]

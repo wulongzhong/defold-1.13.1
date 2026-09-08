@@ -81,7 +81,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | 层 | 名字 | 现在 | 本文要求 |
 | --- | --- | --- | --- |
 | L0 | 工程感知 | `editor_state`（含 `engine` / `game_status`）、磁盘读、`api_manage`（编辑器 `/ref` 或引擎 `/*#`）、`project_doctor` | readiness 门闩：`building` / `observing` 拒写 |
-| L1 | 作者态编辑 | 磁盘/编辑器同一工具名；关编辑器可建 GO 父子、旋转缩放、tile、GUI 节点；磁盘 `batch_execute` 失败回滚 | 编辑器开着时 batch 仍逐步 undo，回包 `atomic: false` |
+| L1 | 作者态编辑 | 磁盘/编辑器同一工具名；关编辑器可建 GO 父子、旋转缩放、tile、GUI 节点；纯作者态 `batch_execute` 失败回滚（磁盘 journal 或编辑器一笔 undo） | 混有 runtime/check 的 batch 仍逐步执行，回包 `atomic: false` |
 | L2 | 编译诊断 | `check` / bob diagnostics / `ERROR:BUILD` / `diagnostics_read` / 更完整的 `logs_read`（severity/domain/prints/stack） | 继续统一 issues 信封 |
 | L3 | 运行与生命周期 | `project_run` batch/live + `project_stop`；CLI 管一个 live dmengine | 保持每工程一个 CLI 进程 |
 | L4 | **运行时观察** | 快照文件 + `runtime_snapshot_query`；live 走 `--agent-control` 握手 | 完整树只落盘；MCP 默认摘要 |
@@ -105,7 +105,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 | 运行时报错 | `logs_read source=all` + `diagnostics_read` | 无日志时回空行，不装失败 |
 | 目标还在跑吗 | `runtime_state` / `editor_state.engine` | CLI live 优先 |
 
-结论：R0–R2 已按本文落地。剩下的是编辑器开着时的整笔 `g/transact` batch、多编辑器 session、以及明确不做的 R3。
+结论：R0–R2 已按本文落地（含编辑器开着时的整笔 batch undo、以及 `session_manage` 列出本工程编辑器 / live / 其它已开编辑器）。明确不做的只剩 R3。
 
 ---
 
@@ -223,7 +223,7 @@ R0 必须先把 batch 做硬：空工程主环不依赖「一直开着一个窗�
 4. 编辑器已选 target（编辑器开着时由 `/agent` 转发，Agent 仍不 curl）。
 5. 探测 `http://127.0.0.1:8001/info`。
 
-多 target：R1 只认一个「当前」target。`runtime_state` 列出看见的，`session_activate` 以后再钉。禁止用「后写覆盖的全局 url 文件」互踩两个工程。
+多 target：`runtime_state` / `session_manage` 列出看见的，默认一个当前。`session_activate` 按 id/url 钉本工程编辑器、CLI live 或 runtime target。禁止用「后写覆盖的全局 url 文件」互踩两个工程。
 
 ### 7.6 引擎要补的（只补观察，不补 MCP）
 
@@ -319,7 +319,7 @@ runtime_screenshot                      → 仅当结构化数据不够、需要
 | `editor_state` | L0 | 有 | 增加 `engine`：有无 target、url、alive |
 | `collection_get_hierarchy` | L1 | 有 | schema 写清 params；分页保留 |
 | `gameobject_get_properties` | L1 | 有 | 回包明确 `source` |
-| `session_activate` | L0 | 单会话空操作 | R1 仍可单会话；多编辑器到 R2 |
+| `session_activate` | L0 | 按 id/url 钉本工程编辑器、CLI live 或 runtime target | 其它工程的编辑器只列出，不能从本 MCP 驱动 |
 | `runtime_observe` | L4 | **无** | **新 core**（落盘 + 摘要） |
 | `runtime_snapshot_query` | L4 | **无** | **新 core**（从文件切片） |
 | `runtime_state` | L3/L4 | **无** | 新 core |
@@ -357,7 +357,7 @@ v0 已有的 manage 保留。R2 再加：`gui_manage`、`atlas_manage`、`tilema
 | 分页 | 树、日志、search 必须有 `offset`/`limit` 和 `truncated` |
 | 超时 | 探活短超时；batch run 用 `tool_timeout_sec`；live observe 不阻塞到游戏自己退出 |
 | 路径 | 工程内路径以 `/` 开头；快照 JSON、可选 PNG 给绝对路径 |
-| `batch_execute` | 编辑器关着：磁盘写入失败整笔回滚（`atomic: true`）。编辑器开着：逐步图事务，回包必须 `atomic: false` |
+| `batch_execute` | 纯作者态：磁盘 journal 或编辑器 `operation-sequence` + 失败 undo（`atomic: true`）。混有 runtime/check/log：逐步执行，回包 `atomic: false` |
 
 ---
 

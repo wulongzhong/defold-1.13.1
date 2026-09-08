@@ -37,9 +37,12 @@
             [editor.workspace :as workspace]
             [util.coll :as coll]
             [util.http-server :as http-server])
-  (:import [java.io File]))
+  (:import [java.io File]
+           [java.lang ProcessHandle]))
 
 (set! *warn-on-reflection* true)
+
+(def ^:dynamic *batch-file-journal* nil)
 
 (def command-names
   ["api_manage"
@@ -358,12 +361,27 @@
            :property (name prop-kw)
            :value (json-value (g/node-value node-id prop-kw))})))))
 
+(defn- note-batch-file! [^File file]
+  (when-let [journal *batch-file-journal*]
+    (let [path (.getAbsolutePath file)]
+      (when-not (contains? (:seen @journal) path)
+        (if (.isFile file)
+          (swap! journal (fn [state]
+                           (-> state
+                               (update :seen conj path)
+                               (update :restore conj [file (slurp file)]))))
+          (swap! journal (fn [state]
+                           (-> state
+                               (update :seen conj path)
+                               (update :created conj file)))))))))
+
 (defn- write-new-resource! [ctx proj-path content]
   (let [workspace (:workspace ctx)
         file (project-file workspace proj-path)]
     (if (.exists file)
       (fail! "INVALID_PARAM" (str "File already exists: " proj-path) "Use filesystem_manage write_text to overwrite.")
       (do
+        (note-batch-file! file)
         (fs/create-file! file content)
         (workspace/resource-sync! workspace)
         {:path proj-path}))))
@@ -377,7 +395,9 @@
         (if-not (and (resource/resource? resource) (string? content))
           (fail! "HANDLER_ERROR" "Resource cannot be written as text" nil)
           (do
-            (fs/create-file! (io/file (resource/abs-path resource)) content)
+            (let [file (io/file (resource/abs-path resource))]
+              (note-batch-file! file)
+              (fs/create-file! file content))
             {:path (resource/proj-path resource)
              :saved true}))))))
 
@@ -536,9 +556,78 @@
                        ids)
      :properties (property-snapshot target)}))
 
-(defn- cmd-session-activate [_ctx _params]
-  {:activated true
-   :sessions 1})
+(defn- session-id [^File project-dir token]
+  (str (.getName project-dir) "@" (subs (str token) 0 (min 8 (count (str token))))))
+
+(defn- agent-session-file ^File [^File project-dir]
+  (io/file project-dir ".internal" "agent" "session.json"))
+
+(defn- user-session-dir ^File []
+  (if-let [override (System/getenv "DEFOLD_AGENT_SESSIONS_DIR")]
+    (io/file override)
+    (if-let [local (System/getenv "LOCALAPPDATA")]
+      (io/file local "Defold" "agent" "sessions")
+      (let [home (System/getProperty "user.home")
+            mac (io/file home "Library" "Application Support" "Defold")]
+        (if (.isDirectory mac)
+          (io/file mac "agent" "sessions")
+          (io/file home ".Defold" "agent" "sessions"))))))
+
+(defn write-session-files!
+  "Write the per-project session file and a user-level registry entry."
+  [^File project-dir port token]
+  (let [session {:schema 1
+                 :session_id (session-id project-dir token)
+                 :project_path (.getAbsolutePath project-dir)
+                 :editor_url (str "http://127.0.0.1:" port)
+                 :editor_pid (.pid (ProcessHandle/current))
+                 :defold_version (or (system/defold-version) "1.13.1")
+                 :readiness "ready"
+                 :source "editor"}
+        text (json/write-str session)
+        project-file (agent-session-file project-dir)
+        registry-file (io/file (user-session-dir) (str (:session_id session) ".json"))]
+    (io/make-parents project-file)
+    (spit project-file text)
+    (io/make-parents registry-file)
+    (spit registry-file text)
+    session))
+
+(defn delete-session-files!
+  "Remove session files if they still name this editor port."
+  [^File project-dir port]
+  (let [url (str "http://127.0.0.1:" port)
+        project-file (agent-session-file project-dir)]
+    (when (.isFile project-file)
+      (try
+        (let [data (json/read-str (slurp project-file) :key-fn keyword)]
+          (when (= url (:editor_url data))
+            (.delete project-file)
+            (let [registry (io/file (user-session-dir) (str (:session_id data) ".json"))]
+              (when (.isFile registry)
+                (.delete registry)))))
+        (catch Exception _
+          nil)))))
+
+(defn- cmd-session-activate [ctx params]
+  (let [workspace (:workspace ctx)
+        project-dir (workspace/project-directory workspace)
+        session-file (agent-session-file project-dir)
+        data (when (.isFile session-file)
+               (json/read-str (slurp session-file) :key-fn keyword))
+        wanted (or (optional-string params :id) (optional-string params :url))]
+    (if (and wanted data (not (or (= wanted (:session_id data))
+                                  (= wanted (:editor_url data))
+                                  (= wanted "editor"))))
+      (fail! "UNKNOWN_TARGET"
+             (str "Session is not this editor: " wanted)
+             "Call session_manage op=list.")
+      {:activated true
+       :id (or (:session_id data) "editor")
+       :url (:editor_url data)
+       :kind "editor"
+       :sessions 1
+       :source "editor"})))
 
 (defn- cmd-collection-open [ctx params]
   (let [node (resolve-collection-node ctx params)
@@ -844,6 +933,9 @@
       (fail! "NOT_ALLOWED" (str "Refusing to " (if move "move" "copy") " " src " -> " dest) nil))
     (when-not (.isFile src-file)
       (fail! "NOT_FOUND" (str "File not found: " src) nil))
+    (note-batch-file! dest-file)
+    (when move
+      (note-batch-file! src-file))
     (if move
       (fs/move-file! src-file dest-file)
       (fs/copy-file! src-file dest-file))
@@ -871,7 +963,9 @@
                      (if-not (string? text)
                        (fail! "MISSING_PARAM" "write_text needs text" nil)
                        (do
-                         (fs/create-file! (project-file workspace path) text)
+                         (let [file (project-file workspace path)]
+                           (note-batch-file! file)
+                           (fs/create-file! file text))
                          (workspace/resource-sync! workspace)
                          {:path path
                           :written true
@@ -952,6 +1046,7 @@
                    (fail! "NOT_ALLOWED" (str "Refusing to delete " path) nil))
                  (when-not (.isFile file)
                    (fail! "NOT_FOUND" (str "File not found: " path) nil))
+                 (note-batch-file! file)
                  (fs/delete-file! file)
                  (workspace/resource-sync! workspace)
                  {:path path
@@ -999,11 +1094,22 @@
                       :source "editor"})
       (unknown-op op ["state" "selection_get" "quit" "mcp_config"]))))
 
-(defn- cmd-session-manage [_ctx params]
+(defn- cmd-session-manage [ctx params]
   (let [op (require-string params :op)]
     (case op
-      "list" {:sessions [{:id "local"
-                          :source "editor-agent"}]}
+      "list" (let [workspace (:workspace ctx)
+                   project-dir (workspace/project-directory workspace)
+                   session-file (agent-session-file project-dir)
+                   data (when (.isFile session-file)
+                          (json/read-str (slurp session-file) :key-fn keyword))]
+               {:sessions [{:id (or (:session_id data) "editor")
+                            :kind "editor"
+                            :url (:editor_url data)
+                            :project (:project_path data)
+                            :alive true
+                            :current true
+                            :source "editor"}]
+                :source "editor"})
       (unknown-op op ["list"]))))
 
 (defn- cmd-api-manage [_ctx params]
@@ -1027,6 +1133,7 @@
 (defn- rewrite-proj-file! [ctx path text]
   (let [workspace (:workspace ctx)
         file (project-file workspace path)]
+    (note-batch-file! file)
     (fs/create-file! file text)
     (workspace/resource-sync! workspace)
     {:path path
@@ -1163,36 +1270,70 @@
 
 (declare handle)
 
+(defn- rollback-batch-files! [workspace journal]
+  (doseq [[^File file text] (rseq (vec (:restore journal)))]
+    (fs/create-file! file text))
+  (doseq [^File file (:created journal)]
+    (when (.isFile file)
+      (fs/delete-file! file)))
+  (when (and workspace
+             (or (pos? (count (:created journal)))
+                 (pos? (count (:restore journal)))))
+    (workspace/resource-sync! workspace)))
+
 (defn- cmd-batch-execute [ctx params]
+  (when g/*current-operation-sequence*
+    (fail! "NOT_ALLOWED" "Nested batch_execute is not allowed" nil))
   (let [commands (get params :commands)]
     (if-not (sequential? commands)
       (fail! "MISSING_PARAM" "batch_execute needs commands[]" nil)
-      (let [results (reduce
-                      (fn [acc item]
-                        (if (not= :ok (:status acc))
-                          acc
-                          (let [command (or (get item :command) (get item "command"))
-                                item-params (or (get item :params) (get item "params") {})
-                                result (handle ctx command item-params)]
-                            (if (= "ok" (:status result))
-                              (update acc :data update :results conj (:data result))
-                              (assoc acc
-                                :status :error
-                                :error (assoc (:error result)
-                                         :completed (get-in acc [:data :results])))))))
-                      {:status :ok
-                       :data {:results []
-                              :atomic false
-                              :undoable_separately true}}
-                      commands)]
-        (if (= :ok (:status results))
-          (:data results)
-          (fail! (get-in results [:error :code] "HANDLER_ERROR")
-                 (get-in results [:error :message] "batch_execute failed")
-                 (get-in results [:error :hint])
-                 (assoc (dissoc (:error results) :code :message :hint)
-                   :atomic false
-                   :undoable_separately true)))))))
+      (let [project-graph (g/node-id->graph-id (:project ctx))
+            op-seq (gensym "agent-batch")
+            journal (atom {:seen #{}
+                           :created []
+                           :restore []})]
+        (binding [g/*current-operation-sequence* op-seq
+                  *batch-file-journal* journal]
+          (let [results (reduce
+                          (fn [acc item]
+                            (if (not= :ok (:status acc))
+                              acc
+                              (let [command (or (get item :command) (get item "command"))
+                                    item-params (or (get item :params) (get item "params") {})
+                                    result (handle ctx command item-params)]
+                                (if (= "ok" (:status result))
+                                  (update acc :data update :results conj (:data result))
+                                  (assoc acc
+                                    :status :error
+                                    :error (assoc (:error result)
+                                             :completed (get-in acc [:data :results])))))))
+                          {:status :ok
+                           :data {:results []
+                                  :atomic true
+                                  :undoable_separately false
+                                  :undoable true
+                                  :source "editor"}}
+                          commands)
+                snapshot @journal
+                can-undo (and (g/has-undo? project-graph)
+                              (= op-seq (g/prev-sequence-label project-graph)))
+                rolled-back (and (not= :ok (:status results))
+                                 (or can-undo
+                                     (pos? (count (:created snapshot)))
+                                     (pos? (count (:restore snapshot)))))]
+            (when (not= :ok (:status results))
+              (when can-undo
+                (g/undo! project-graph))
+              (rollback-batch-files! (:workspace ctx) snapshot))
+            (if (= :ok (:status results))
+              (:data results)
+              (fail! (get-in results [:error :code] "HANDLER_ERROR")
+                     (get-in results [:error :message] "batch_execute failed")
+                     (get-in results [:error :hint])
+                     (assoc (dissoc (:error results) :code :message :hint)
+                       :atomic true
+                       :rolled_back rolled-back
+                       :undoable_separately false)))))))))
 
 (def ^:private command-fns
   {"api_manage" cmd-api-manage

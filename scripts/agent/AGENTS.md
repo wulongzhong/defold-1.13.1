@@ -109,7 +109,7 @@ python .../defold_agent.py patch-script --path /main/cube.script --old "function
 python .../defold_agent.py command collection_manage --params "{\"op\":\"create\",\"path\":\"/main/level.collection\"}"
 ```
 
-`batch_execute` runs steps in order. With the editor closed, disk writes are journaled and a failed step rolls the batch back (`atomic: true`). With the editor open, each graph edit is its own undo (`atomic: false`, `undoable_separately: true`).
+`batch_execute` runs steps in order. Authoring-only batches are one unit: with the editor closed, disk writes are journaled and a failed step rolls the batch back (`atomic: true`). With the editor open, the same `commands[]` is one `/agent/command` whose graph edits share one undo sequence; a failed step undoes that sequence and deletes files the batch created (`atomic: true`). If the batch mixes runtime/check/log tools, steps stay sequential (`atomic: false`).
 
 stdio MCP (this CLI, no plugin, no HTTP URL):
 
@@ -129,6 +129,8 @@ Aliases (`create_gameobject`, `create_script`, `patch_script`, `add_component`, 
 Do not curl `/agent/command` as the client protocol; use this CLI. Do not add `addons/` or `*.editor_script` for AI.
 
 Authoring tree (`collection_get_hierarchy`) is not the running game. Runtime tree is `runtime_get_hierarchy` / `runtime_snapshot_query` against a snapshot file.
+
+`session_manage op=list` shows this project's editor (from `.internal/agent/session.json`), the CLI live engine, other runtime targets, and other open editors in the user session registry. `session_activate` pins by `id` or `url`. Another project's editor cannot be driven from this MCP; start a stdio server with that `--project`.
 
 ## Diagnose (logs, check, authoring vs runtime)
 
