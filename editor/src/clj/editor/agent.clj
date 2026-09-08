@@ -542,7 +542,7 @@
                                   (distinct)
                                   (take 8))
                             (g/flatten-errors outline))})
-      (let [children (or (:children outline) [])]
+      (let [children (or (:children outline) [])
             page (into [] (comp (drop offset) (take limit)) children)]
         {:path (resource/proj-path (g/node-value collection-node :resource))
          :id (outline-label outline (:localization ctx))
