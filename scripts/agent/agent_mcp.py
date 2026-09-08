@@ -625,6 +625,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": {"type": "string"},
             "component_type": {"type": "string"},
             "path": {"type": "string"},
+            "tile_set": {"type": "string"},
+            "atlas": {"type": "string"},
+            "animation": {"type": "string"},
+            "default_animation": {"type": "string"},
+            "text": {"type": "string"},
         },
     },
     "script_create": {

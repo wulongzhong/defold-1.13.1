@@ -578,7 +578,26 @@ def component_snippet(params: Dict[str, Any]) -> Tuple[str, str]:
             f'components {{\n  id: "{ident}"\n  component: "{sanitize_proj_path(str(path))}"\n}}\n',
             ident,
         )
-    payload = COMPONENT_EMBEDDED.get(type_name, '\\n"\n  "')
+    if type_name == "sprite":
+        tile_set = params.get("tile_set") or params.get("atlas") or ""
+        animation = params.get("animation") or params.get("default_animation") or ""
+        if tile_set:
+            tile_set = sanitize_proj_path(str(tile_set))
+        payload = (
+            f'tile_set: \\"{tile_set}\\"\\n"\n'
+            f'  "default_animation: \\"{animation}\\"\\n"\n'
+            f'  "material: \\"/builtins/materials/sprite.material\\"\\n"\n'
+            f'  "'
+        )
+    elif type_name == "label":
+        label = str(params.get("text") or "Label").replace('"', "")
+        payload = (
+            f'text: \\"{label}\\"\\n"\n'
+            f'  "font: \\"/builtins/fonts/default.font\\"\\n"\n'
+            f'  "'
+        )
+    else:
+        payload = COMPONENT_EMBEDDED.get(type_name, '\\n"\n  "')
     return (
         f'embedded_components {{\n  id: "{ident}"\n  type: "{type_name}"\n  data: "{payload}"\n}}\n',
         ident,

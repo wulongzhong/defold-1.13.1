@@ -653,11 +653,20 @@ class ToolQualityTest(unittest.TestCase):
             attached = dispatch_command(
                 project,
                 "component_add",
-                {"path": "/main/cube.go", "type": "sprite", "id": "cube"},
+                {
+                    "path": "/main/cube.go",
+                    "type": "sprite",
+                    "id": "cube",
+                    "tile_set": "/main/hero.atlas",
+                    "animation": "idle",
+                },
                 2,
             )
             self.assertEqual("ok", attached["status"])
-            self.assertIn('type: "sprite"', (project / "main" / "cube.go").read_text(encoding="utf-8"))
+            go_text = (project / "main" / "cube.go").read_text(encoding="utf-8")
+            self.assertIn('type: "sprite"', go_text)
+            self.assertIn("hero.atlas", go_text)
+            self.assertIn("idle", go_text)
             painted = dispatch_command(
                 project,
                 "component_manage",
