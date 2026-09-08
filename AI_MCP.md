@@ -613,7 +613,7 @@ HTTP 层：鉴权失败 401；业务失败仍 **200 + `status=error`**（和 God
 - 编辑器 `POST /agent/command`：路径 B 工具面（hierarchy / create-go / script_patch / manage），源码不是插件
 - `bob --diagnostics-json=`：issues 带 `resource` / `line` / LSP `range`；stdout 另打 `ERROR:BUILD: file:line:`
 - 编辑器 `POST /command/check`：只编译不启动（Godot `--check-only`；`/command/build` 仍会跑游戏）
-- `dmengine --quit-after-frames=N --screenshot=path.png --runtime-dump=path.json --debug-collisions`
+- `dmengine --quit-after-frames=N --screenshot=path.png --runtime-dump=path.json --agent-control=dir --debug-collisions`
 - `defold_agent.py observe` / `runtime_observe`：完整 scene_graph 落盘，MCP 默认只回摘要；`runtime_snapshot_query` 从文件取切片（R0）。截屏不是默认观察。
 - Lua 运行时：`ERROR:SCRIPT: file:line: message` + `at: file:line`（能从 traceback 补位置）
 - `scripts/agent/AGENTS.md`：空工程模板

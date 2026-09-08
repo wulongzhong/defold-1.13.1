@@ -71,6 +71,19 @@ Do **not** `filesystem_manage read_text` a snapshot. Do **not** start the loop w
 
 `loop` is check + observe (still no screenshot unless you pass `--screenshot`).
 
+## Live run (still files, never HTTP MCP)
+
+```bash
+python .../defold_agent.py project-run --mode live
+python .../defold_agent.py observe
+python .../defold_agent.py snapshot-query --op get_node --id cube
+python .../defold_agent.py project-stop
+```
+
+`project-run --mode live` starts dmengine with `--agent-control=.internal/agent/control` and leaves it running. Later `observe` writes `dump.request`; the engine writes the scene graph to a file and `dump.ready`. Query that file. There is no HTTP MCP and no `GET /scene_graph` in the agent loop.
+
+One live process per project. `project-stop` kills the pid recorded in `.internal/agent/engine.json`.
+
 ## Edit the live graph (no plugin)
 
 `command` talks to the editor's first-party `POST /agent/command` when the project is open (Bearer from `.internal/editor.token`). Mutations go through the same graph APIs as the outline (Ctrl+Z works). If the editor is closed, a subset falls back to disk text (scripts, hierarchy parse, `game.project` settings). That disk path is **not** undoable.

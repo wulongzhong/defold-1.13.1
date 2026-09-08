@@ -121,7 +121,7 @@
 
 /*# write a runtime scene-graph dump
  * Write the live scene graph as JSON when the engine quits (same payload as
- * `GET /scene_graph`). Independent of `--screenshot=`. Combine with
+ * the in-process scene graph walk). Independent of `--screenshot=`. Combine with
  * `--quit-after-frames=` so an agent can query the tree after a batch run.
  *
  * @macro
@@ -129,6 +129,19 @@
  * @examples
  * ```bash
  * $ ./dmengine --quit-after-frames=30 --runtime-dump=.internal/agent/snapshots/raw.json
+ * ```
+ */
+
+/*# file handshake for live agent dumps
+ * Watch `DIR/dump.request` each frame. When present, write the scene graph to
+ * the path inside that file (or `DIR/dump.json`) and replace it with
+ * `DIR/dump.ready`. No HTTP. Used by `defold_agent.py` live observe.
+ *
+ * @macro
+ * @name --agent-control=
+ * @examples
+ * ```bash
+ * $ ./dmengine --agent-control=.internal/agent/control
  * ```
  */
 

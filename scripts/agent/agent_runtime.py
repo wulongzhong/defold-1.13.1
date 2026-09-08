@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import shutil
+import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -22,6 +25,9 @@ from agent_ops import error_envelope, ok_envelope
 SNAPSHOT_SCHEMA = 1
 SNAPSHOTS_DIR = Path(".internal") / "agent" / "snapshots"
 ENGINE_JSON = Path(".internal") / "agent" / "engine.json"
+CONTROL_DIR = Path(".internal") / "agent" / "control"
+ENGINE_LOG = Path(".internal") / "agent" / "engine.log"
+DUMP_WAIT_SEC = 8.0
 RETAIN = 8
 INLINE_BUDGET = 48 * 1024
 NODE_HARD_CAP = 256
@@ -171,10 +177,11 @@ def write_engine_json(project: Path, log: str) -> Optional[Dict[str, Any]]:
         "port": port,
         "captured_at": utc_now(),
     }
-    dest = project / ENGINE_JSON
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return payload
+    existing = read_engine_json(project) or {}
+    if existing.get("mode") == "live" and pid_alive(int(existing.get("pid") or 0)):
+        existing.update(payload)
+        payload = existing
+    return write_engine_record(project, payload)
 
 
 def read_engine_json(project: Path) -> Optional[Dict[str, Any]]:
@@ -578,8 +585,164 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     return error_envelope("UNKNOWN_OP", f"Unknown op: {op}")
 
 
+def control_dir(project: Path) -> Path:
+    return project / CONTROL_DIR
+
+
+def engine_log_path(project: Path) -> Path:
+    return project / ENGINE_LOG
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        process_query = 0x1000
+        still_active = 259
+        handle = kernel32.OpenProcess(process_query, wintypes.BOOL(False), wintypes.DWORD(int(pid)))
+        if not handle:
+            return False
+        code = wintypes.DWORD()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and code.value == still_active
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def live_status(project: Path) -> Dict[str, Any]:
+    engine = read_engine_json(project) or {}
+    pid = int(engine["pid"]) if engine.get("pid") else 0
+    alive = bool(engine.get("mode") == "live" and pid_alive(pid))
+    status = dict(engine)
+    status["alive"] = alive
+    status["pid"] = pid or None
+    return status
+
+
+def write_engine_record(project: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
+    dest = project / ENGINE_JSON
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
+def request_live_dump(project: Path, dest: Path, timeout: float = DUMP_WAIT_SEC) -> Path:
+    directory = control_dir(project)
+    directory.mkdir(parents=True, exist_ok=True)
+    request = directory / "dump.request"
+    ready = directory / "dump.ready"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        dest.unlink()
+    if ready.exists():
+        ready.unlink()
+    tmp = directory / "dump.request.tmp"
+    tmp.write_text(str(dest), encoding="utf-8")
+    tmp.replace(request)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if ready.is_file():
+            text = ready.read_text(encoding="utf-8", errors="replace")
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            status = lines[0] if lines else ""
+            ready.unlink(missing_ok=True)
+            if status != "OK" or not dest.is_file():
+                raise RuntimeError("Live dump failed")
+            return dest
+        time.sleep(0.05)
+    raise TimeoutError("Timed out waiting for dump.ready")
+
+
+def observe_from_live(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
+    status = live_status(project)
+    if not status.get("alive"):
+        return error_envelope(
+            "ENGINE_NOT_RUNNING",
+            "No live dmengine is running.",
+            "Call project_run with mode=live, or omit live and use batch observe.",
+        )
+    raw = snapshots_dir(project) / "_raw.json"
+    try:
+        request_live_dump(project, raw, float(params.get("timeout") or DUMP_WAIT_SEC))
+    except TimeoutError:
+        return error_envelope(
+            "RUNTIME_DUMP_MISSING",
+            "Live engine did not write dump.ready. Rebuild dmengine with --agent-control.",
+        )
+    except RuntimeError as error:
+        return error_envelope("RUNTIME_DUMP_MISSING", str(error))
+    record = wrap_engine_dump(
+        project,
+        raw,
+        mode="live",
+        frame=None,
+        target={"pid": status.get("pid"), "mode": "live"},
+        issues=[],
+    )
+    log_lines = read_engine_log_lines(project)
+    return observe_envelope(
+        {**record, "_path": str(snapshots_dir(project) / f"{record['id']}.json")},
+        inline=params.get("inline") or "summary",
+        log_lines=log_lines,
+        alive=True,
+    )
+
+
+def stop_live_engine(project: Path) -> Dict[str, Any]:
+    status = live_status(project)
+    pid = status.get("pid")
+    if not pid:
+        return error_envelope("ENGINE_NOT_RUNNING", "No live engine pid is recorded.")
+    if status.get("alive"):
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(int(pid)), "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=5,
+            )
+        else:
+            try:
+                os.kill(int(pid), 15)
+            except OSError:
+                pass
+        deadline = time.time() + 3
+        while time.time() < deadline and pid_alive(int(pid)):
+            time.sleep(0.05)
+        if pid_alive(int(pid)) and os.name != "nt":
+            try:
+                os.kill(int(pid), 9)
+            except OSError:
+                pass
+    engine = read_engine_json(project) or {}
+    engine["mode"] = "stopped"
+    engine["alive"] = False
+    write_engine_record(project, engine)
+    return ok_envelope({"stopped": True, "pid": pid, "source": "runtime"}, readiness="no_runtime")
+
+
+def read_engine_log_lines(project: Path, limit: int = 200) -> List[str]:
+    path = engine_log_path(project)
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = [line for line in text.splitlines() if line]
+    return lines[-limit:]
+
+
 def runtime_state_payload(project: Path) -> Dict[str, Any]:
-    engine = read_engine_json(project)
+    status = live_status(project)
     latest = None
     latest_path = snapshots_dir(project) / "latest.json"
     if latest_path.is_file():
@@ -588,14 +751,13 @@ def runtime_state_payload(project: Path) -> Dict[str, Any]:
             latest = snapshot_handle(record, "summary")
         except (OSError, json.JSONDecodeError, ValueError, FileNotFoundError):
             latest = {"path": str(latest_path)}
-    alive = False
-    readiness = "no_runtime"
+    readiness = "running" if status.get("alive") else "no_runtime"
     return ok_envelope(
         {
             "source": "runtime",
-            "engine": engine,
+            "engine": status,
             "latest_snapshot": latest,
-            "target": {"url": (engine or {}).get("url"), "alive": alive},
+            "target": {"pid": status.get("pid"), "alive": bool(status.get("alive")), "mode": status.get("mode")},
         },
         readiness=readiness,
     )
@@ -603,11 +765,11 @@ def runtime_state_payload(project: Path) -> Dict[str, Any]:
 
 def runtime_get_hierarchy(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     if params.get("snapshot") == "live":
-        return error_envelope(
-            "ENGINE_NOT_RUNNING",
-            "Live hierarchy is not available in R0.",
-            "Omit snapshot or pass latest to read the last dump file.",
-        )
+        refreshed = observe_from_live(project, {"inline": "summary"})
+        if refreshed.get("status") != "ok":
+            return refreshed
+        params = dict(params)
+        params["snapshot"] = "latest"
     if params.get("id"):
         merged = dict(params)
         merged["op"] = "get_subtree"
@@ -640,11 +802,11 @@ def runtime_get_hierarchy(project: Path, params: Dict[str, Any]) -> Dict[str, An
 
 def runtime_get_properties(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     if params.get("snapshot") == "live":
-        return error_envelope(
-            "ENGINE_NOT_RUNNING",
-            "Live properties are not available in R0.",
-            "Omit snapshot or pass latest to read the last dump file.",
-        )
+        refreshed = observe_from_live(project, {"inline": "summary"})
+        if refreshed.get("status") != "ok":
+            return refreshed
+        params = dict(params)
+        params["snapshot"] = "latest"
     merged = dict(params)
     merged["op"] = "get_node"
     return query_snapshot(project, merged)

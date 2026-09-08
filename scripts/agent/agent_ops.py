@@ -427,15 +427,21 @@ def intercept_existing_http(
     if command in {"project_build", "project_check"}:
         return None
     if command == "logs_read":
+        from agent_runtime import read_engine_log_lines
+
+        limit = int(params.get("limit") or 200)
         got = editor_get(project, "/console", timeout)
+        if got is not None:
+            status, body = got
+            if status == 200 and isinstance(body, dict):
+                lines = body.get("lines") or []
+                return ok_envelope({"lines": lines[-limit:], "total": len(lines), "source": "console"})
+        lines = read_engine_log_lines(project, limit)
+        if lines:
+            return ok_envelope({"lines": lines, "total": len(lines), "source": "engine-log"})
         if got is None:
             return None
-        status, body = got
-        if status == 200 and isinstance(body, dict):
-            lines = body.get("lines") or []
-            limit = int(params.get("limit") or 200)
-            return ok_envelope({"lines": lines[-limit:], "total": len(lines), "source": "console"})
-        return error_envelope("HANDLER_ERROR", f"GET /console failed ({status})")
+        return error_envelope("HANDLER_ERROR", f"GET /console failed ({got[0]})")
     if command == "editor_preview":
         path = params.get("path") or params.get("resource")
         if not path:
@@ -481,6 +487,8 @@ RUNTIME_COMMANDS = {
     "runtime_get_hierarchy",
     "runtime_get_properties",
     "runtime_state",
+    "project_run",
+    "project_stop",
 }
 
 
@@ -509,6 +517,14 @@ def handle_runtime_command(
         from defold_agent import observe_runtime
 
         return observe_runtime(project, params, timeout)
+    if command == "project_run":
+        from defold_agent import project_run
+
+        return project_run(project, params, timeout)
+    if command == "project_stop":
+        from agent_runtime import stop_live_engine
+
+        return stop_live_engine(project)
     return error_envelope("UNKNOWN_COMMAND", f"Unknown runtime command: {command}")
 
 
@@ -523,8 +539,12 @@ def dispatch_command(
         return handle_runtime_command(project, command, params, timeout)
     intercepted = intercept_existing_http(project, command, params, timeout)
     if intercepted is not None:
-        return intercepted
-    editor = editor_command(project, command, params, timeout)
-    if editor is not None:
-        return editor
-    return disk_command(project, command, params)
+        result = intercepted
+    else:
+        editor = editor_command(project, command, params, timeout)
+        result = editor if editor is not None else disk_command(project, command, params)
+    if command == "editor_state" and result.get("status") == "ok" and isinstance(result.get("data"), dict):
+        from agent_runtime import live_status
+
+        result["data"]["engine"] = live_status(project)
+    return result

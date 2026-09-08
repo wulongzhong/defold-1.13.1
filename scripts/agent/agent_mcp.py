@@ -43,11 +43,13 @@ TOOLS = [
     ("editor_manage", "op: state | selection_get | quit"),
     ("session_manage", "op: list"),
     ("api_manage", "op: get — forwards GET /ref?q="),
-    ("runtime_observe", "Batch-run the game, write a full scene_graph snapshot file, return a summary. Default does not screenshot."),
+    ("runtime_observe", "Write a scene_graph snapshot file and return a summary. Uses the live engine if project_run is up; otherwise a batch run. Default does not screenshot."),
     ("runtime_snapshot_query", "Read a precise slice from a snapshot file. Engine may already be dead."),
     ("runtime_get_hierarchy", "Runtime tree from the latest snapshot file (not the authoring collection)."),
     ("runtime_get_properties", "One runtime GO/component from the latest snapshot file."),
-    ("runtime_state", "Latest snapshot handle and last known engine service url."),
+    ("runtime_state", "Latest snapshot handle and whether the CLI-owned live engine is alive."),
+    ("project_run", "Start dmengine. mode=live keeps it running and dumps via control files, not HTTP."),
+    ("project_stop", "Stop the CLI-owned live dmengine."),
 ]
 
 TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
@@ -55,8 +57,9 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "frames": {"type": "integer", "default": 30},
+            "frames": {"type": "integer", "default": 30, "description": "Batch only. Ignored when a live engine is running."},
             "inline": {"type": "string", "enum": ["summary", "preview", "full"], "default": "summary"},
+            "mode": {"type": "string", "enum": ["live", "batch"], "description": "Force batch even if a live engine is running."},
             "include": {
                 "type": "array",
                 "items": {"type": "string", "enum": ["screenshot"]},
@@ -92,7 +95,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "snapshot": {"type": "string", "default": "latest"},
+            "snapshot": {
+                "type": "string",
+                "default": "latest",
+                "description": "latest, snapshot id, path, or live to refresh via file handshake.",
+            },
             "id": {"type": "string"},
             "depth": {"type": "integer", "default": 8},
             "offset": {"type": "integer", "default": 0},
@@ -106,10 +113,24 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "id": {"type": "string"},
             "component": {"type": "string"},
-            "snapshot": {"type": "string", "default": "latest"},
+            "snapshot": {
+                "type": "string",
+                "default": "latest",
+                "description": "latest, snapshot id, path, or live to refresh via file handshake.",
+            },
         },
     },
     "runtime_state": {"type": "object", "additionalProperties": False, "properties": {}},
+    "project_run": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "mode": {"type": "string", "enum": ["live", "batch"], "default": "live"},
+            "no_build": {"type": "boolean", "default": False},
+            "frames": {"type": "integer", "default": 30, "description": "Batch only."},
+        },
+    },
+    "project_stop": {"type": "object", "additionalProperties": False, "properties": {}},
 }
 
 

@@ -441,6 +441,7 @@ namespace dmEngine
     {
         m_ScreenshotPath[0] = 0;
         m_RuntimeDumpPath[0] = 0;
+        m_AgentControlDir[0] = 0;
         m_EngineService = engine_service;
         m_Register = dmGameObject::NewRegister();
         m_InputBuffer.SetCapacity(64);
@@ -1055,6 +1056,7 @@ namespace dmEngine
         const char quit_after_frames_arg[] = "--quit-after-frames=";
         const char screenshot_arg[] = "--screenshot=";
         const char runtime_dump_arg[] = "--runtime-dump=";
+        const char agent_control_arg[] = "--agent-control=";
         const char debug_collisions_arg[] = "--debug-collisions";
         for (int i = 0; i < argc; ++i)
         {
@@ -1106,6 +1108,19 @@ namespace dmEngine
                 if (value[0])
                 {
                     dmStrlCpy(engine->m_RuntimeDumpPath, value, sizeof(engine->m_RuntimeDumpPath));
+                }
+            }
+            else if (strncmp(agent_control_arg, arg, sizeof(agent_control_arg)-1) == 0)
+            {
+                const char* value = arg + sizeof(agent_control_arg) - 1;
+                if (value[0])
+                {
+                    dmStrlCpy(engine->m_AgentControlDir, value, sizeof(engine->m_AgentControlDir));
+                    size_t dir_len = strlen(engine->m_AgentControlDir);
+                    while (dir_len > 0 && (engine->m_AgentControlDir[dir_len - 1] == '/' || engine->m_AgentControlDir[dir_len - 1] == '\\'))
+                    {
+                        engine->m_AgentControlDir[--dir_len] = 0;
+                    }
                 }
             }
             else if (strcmp(debug_collisions_arg, arg) == 0)
@@ -2297,6 +2312,77 @@ bail:
         Exit(engine, exit_code);
     }
 
+    static void TrimControlLine(char* text)
+    {
+        char* start = text;
+        while (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')
+        {
+            ++start;
+        }
+        if (start != text)
+        {
+            memmove(text, start, strlen(start) + 1);
+        }
+        size_t len = strlen(text);
+        while (len > 0 && (text[len - 1] == ' ' || text[len - 1] == '\t' || text[len - 1] == '\r' || text[len - 1] == '\n'))
+        {
+            text[--len] = 0;
+        }
+    }
+
+    static void MaybeAgentControlDump(HEngine engine)
+    {
+        if (!engine->m_AgentControlDir[0] || !engine->m_Register)
+        {
+            return;
+        }
+
+        char request_path[1024];
+        char ready_path[1024];
+        char default_dump[1024];
+        dmSnPrintf(request_path, sizeof(request_path), "%s/dump.request", engine->m_AgentControlDir);
+        dmSnPrintf(ready_path, sizeof(ready_path), "%s/dump.ready", engine->m_AgentControlDir);
+        dmSnPrintf(default_dump, sizeof(default_dump), "%s/dump.json", engine->m_AgentControlDir);
+
+        FILE* request = fopen(request_path, "rb");
+        if (!request)
+        {
+            return;
+        }
+
+        char dest[1024];
+        dest[0] = 0;
+        size_t nread = fread(dest, 1, sizeof(dest) - 1, request);
+        fclose(request);
+        dest[nread] = 0;
+        TrimControlLine(dest);
+        if (!dest[0])
+        {
+            dmStrlCpy(dest, default_dump, sizeof(dest));
+        }
+
+        bool ok = dmEngineService::WriteSceneGraphJson(engine->m_Register, dest);
+        remove(request_path);
+
+        FILE* ready = fopen(ready_path, "wb");
+        if (ready)
+        {
+            fputs(ok ? "OK\n" : "ERROR\n", ready);
+            fputs(dest, ready);
+            fputc('\n', ready);
+            fclose(ready);
+        }
+
+        if (ok)
+        {
+            dmLogInfo("Wrote runtime dump to '%s' (agent-control)", dest);
+        }
+        else
+        {
+            dmLogError("Failed to write runtime dump '%s' (agent-control)", dest);
+        }
+    }
+
     // Return true if the frame should be skipped
     static bool UpdateFrameThrottle(HEngine engine, float dt, bool has_input)
     {
@@ -2634,6 +2720,7 @@ bail:
 
         ++engine->m_Stats.m_FrameCount;
         engine->m_Stats.m_TotalTime += dt;
+        MaybeAgentControlDump(engine);
         MaybeQuitAfterFrames(engine);
     }
 

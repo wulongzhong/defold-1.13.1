@@ -228,6 +228,121 @@ class RuntimeSnapshotTest(unittest.TestCase):
             ids = [node["id"] for node in tree["data"]["nodes"]]
             self.assertIn("cube", ids)
 
+    def test_live_dump_handshake(self):
+        import json
+        import tempfile
+        import threading
+        import time
+        from pathlib import Path
+
+        from agent_runtime import request_live_dump
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            control = project / ".internal" / "agent" / "control"
+            dest = project / ".internal" / "agent" / "snapshots" / "_raw.json"
+            graph = self._graph()
+
+            def engine_side():
+                request = control / "dump.request"
+                for _ in range(200):
+                    if request.is_file():
+                        break
+                    time.sleep(0.01)
+                path = Path(request.read_text(encoding="utf-8").strip())
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(graph), encoding="utf-8")
+                (control / "dump.ready").write_text(f"OK\n{path}\n", encoding="utf-8")
+
+            worker = threading.Thread(target=engine_side)
+            worker.start()
+            written = request_live_dump(project, dest, timeout=2)
+            worker.join(timeout=2)
+            self.assertTrue(written.is_file())
+            self.assertEqual("cube", json.loads(written.read_text(encoding="utf-8"))["children"][0]["id"])
+
+    def test_logs_read_from_engine_file(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            log = project / ".internal" / "agent" / "engine.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text("hello\nERROR:SCRIPT: /main/a.script:1: boom\n", encoding="utf-8")
+            result = dispatch_command(project, "logs_read", {"limit": 10}, 1)
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("engine-log", result["data"]["source"])
+            self.assertTrue(any("boom" in line for line in result["data"]["lines"]))
+
+    def test_editor_state_includes_engine(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game.project").write_text("[project]\ntitle = T\n", encoding="utf-8")
+            result = dispatch_command(project, "editor_state", {}, 1)
+            self.assertEqual("ok", result["status"])
+            self.assertIn("engine", result["data"])
+            self.assertFalse(result["data"]["engine"].get("alive"))
+
+    def test_observe_uses_live_handshake(self):
+        import json
+        import os
+        import tempfile
+        import threading
+        import time
+        from pathlib import Path
+
+        from agent_runtime import write_engine_record
+        from defold_agent import observe_runtime, project_run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            write_engine_record(project, {"pid": os.getpid(), "mode": "live"})
+            graph = self._graph()
+            control = project / ".internal" / "agent" / "control"
+
+            def engine_side():
+                request = control / "dump.request"
+                for _ in range(200):
+                    if request.is_file():
+                        break
+                    time.sleep(0.01)
+                path = Path(request.read_text(encoding="utf-8").strip())
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(graph), encoding="utf-8")
+                (control / "dump.ready").write_text(f"OK\n{path}\n", encoding="utf-8")
+
+            worker = threading.Thread(target=engine_side)
+            worker.start()
+            result = observe_runtime(project, {"inline": "summary"}, 2)
+            worker.join(timeout=2)
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("live", result["data"]["mode"])
+            self.assertTrue(result["data"]["target"]["alive"])
+            self.assertNotIn("hierarchy", result["data"])
+            blocked = project_run(project, {"mode": "live", "no_build": True}, 1)
+            self.assertEqual("error", blocked["status"])
+            self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+
+    def test_stop_marks_missing_pid_stopped(self):
+        import os
+        import tempfile
+        from pathlib import Path
+
+        from agent_runtime import pid_alive, stop_live_engine, write_engine_record
+
+        self.assertTrue(pid_alive(os.getpid()))
+        self.assertFalse(pid_alive(999999))
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            write_engine_record(project, {"pid": 999999, "mode": "live"})
+            result = stop_live_engine(project)
+            self.assertEqual("ok", result["status"])
+            self.assertTrue(result["data"]["stopped"])
+
 
 if __name__ == "__main__":
     unittest.main()

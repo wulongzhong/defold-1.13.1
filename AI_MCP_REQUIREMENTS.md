@@ -381,7 +381,7 @@ CLI 拉起的 live 进程由 CLI 管死：`project_stop`、进程退出、工程
 
 | code | 何时 |
 | --- | --- |
-| `ENGINE_UNREACHABLE` | 没有 target，或 `/info` `/scene_graph` 失败 |
+| `ENGINE_UNREACHABLE` | 找不到 dmengine 可执行文件 |
 | `ENGINE_NOT_RUNNING` | 要 live 观察但进程已退，且没有 batch dump |
 | `RUNTIME_DUMP_MISSING` | batch 结束但快照 **JSON** 没写成。缺 PNG 不报这个码 |
 | `SNAPSHOT_NOT_FOUND` | `snapshot` id/路径不存在或不是本工程快照 |
@@ -409,7 +409,7 @@ CLI 拉起的 live 进程由 CLI 管死：`project_stop`、进程退出、工程
 ### R1 — 活观察 + 工具质量
 
 - `project_run mode=live` / `project_stop`（**编辑器可关**，CLI 管进程）。
-- 可选：引擎 **`GET /screenshot`** + `runtime_screenshot`（不是 `POST /post`；不是 R1 完成定义的一部分）。
+- live dump 走 **`--agent-control` 文件握手**（`dump.request` / `dump.ready`）。**禁止**用引擎 HTTP 或 HTTP MCP 做观察。
 - `runtime_state`、live 采集后同样落盘再查。`inline` 三档；查询 op 含 `get_path`。
 - `runtime_get_hierarchy` 默认 `limit=200` 且默认读文件。
 - `editor_state.engine`。
@@ -486,7 +486,7 @@ R3 不进「完整 MCP」的完成定义。完整 = R1 验收通过。
 
 | # | 决定 | 理由 |
 | --- | --- | --- |
-| 1 | 若做 live 截屏：协议 = **`GET /screenshot` → `image/png`**。观察层 **禁止** 走 `POST /post`。observe **默认不截** | `/info` `/scene_graph` 已是 GET。截屏是可选视觉能力，不是观察主路径。`POST /post` 是干预通道（L5）。 |
+| 1 | live 观察 = **`--agent-control` 文件握手**。不实现 HTTP MCP，不用 `GET /scene_graph` / `GET /screenshot` 当 Agent 协议 | HTTP MCP 慢且不稳。stdio MCP + 落盘查询才是主路径。引擎 HTTP 分析器可以留着给人用，不注册成 tool。 |
 | 2 | **`runtime_observe` 默认 `inline=summary`**（无节点列表）。`preview` 最多 80 浅节点。**`runtime_get_hierarchy` 默认 `limit=200`** | 主环信封是快照句柄 + 摘要 + issues，不是图。preview 给空工程扫一眼。单独查树与作者态对齐用 200。 |
 | 3 | **编辑器关着允许 `project_run mode=live`** | 成功标准第 4 条：编辑器可关。关着就不能保活，则「现在玩家在哪」仍要重启，R1 白做。进程由 CLI 管：`project_stop`、退出、换工程、每工程一个 live。编辑器后来自己 Play 了，`runtime_state` 列出，默认仍打 CLI 拉起的那个。 |
 | 4 | **`runtime_diff` 进 R2，不进 R1** | 完整 MCP = R1。R1 已有两边 get + `source` 字段，Agent 能手比。diff 是省事工具，放进 R1 会拖住「做完」的定义。R2 标题就是对照与领域。 |
@@ -501,7 +501,7 @@ R3 不进「完整 MCP」的完成定义。完整 = R1 验收通过。
 2. CLI 把 dump 收成 `.internal/agent/snapshots/{id}.json`，observe 默认摘要、默认不截屏。
 3. `runtime_snapshot_query`（`get_node` / `list_ids` / `find` / `get_subtree`），写测试。
 4. 挂上 MCP schema。`AGENTS.md`：check → observe → query 文件 → 再改。禁止 `read_text` 快照。截屏不写进默认循环。
-5. 再做 live：保活、落盘、`runtime_state`、`get_path`、`inline=full` 预算。`GET /screenshot` 作为可选能力跟上。
+5. 再做 live：保活、`--agent-control` 落盘、`runtime_state`、`get_path`、`inline=full` 预算。不做 HTTP MCP。
 6. 最后才碰领域 manage 和干预。
 
 R0 之前不要开 atlas/tilemap 工具面。观察层比再加三个 manage 更能改变 Agent 会不会做对游戏。

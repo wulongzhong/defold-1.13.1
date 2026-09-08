@@ -191,6 +191,7 @@ namespace dmEngine
         bool                                        m_DebugCollisions;
         char                                        m_ScreenshotPath[1024];
         char                                        m_RuntimeDumpPath[1024];
+        char                                        m_AgentControlDir[1024];
     };
 
 

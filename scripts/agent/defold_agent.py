@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -35,7 +36,17 @@ from agent_ops import (
     error_envelope,
     read_editor_endpoint as ops_read_editor_endpoint,
 )
-from agent_runtime import observe_envelope, wrap_engine_dump, write_engine_json
+from agent_runtime import (
+    control_dir,
+    engine_log_path,
+    live_status,
+    observe_envelope,
+    observe_from_live,
+    utc_now,
+    wrap_engine_dump,
+    write_engine_json,
+    write_engine_record,
+)
 
 
 ISSUE_KEYS = ("severity", "resource", "line", "message")
@@ -529,6 +540,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "check": "defold_agent.py check --project <dir>",
             "run": "defold_agent.py run --frames 30 --runtime-dump .internal/agent/snapshots/raw.json",
             "observe": "defold_agent.py observe --frames 30",
+            "live": "defold_agent.py project-run --mode live",
+            "stop": "defold_agent.py project-stop",
             "command": "defold_agent.py command editor_state",
             "mcp": "defold_agent.py mcp   # stdio MCP, no game plugin",
             "engine_flags": [
@@ -591,6 +604,10 @@ def observe_runtime(project: Path, params: Dict[str, Any], timeout: float) -> Di
     inline = params.get("inline") or "summary"
     if inline not in {"summary", "preview", "full"}:
         return error_envelope("INVALID_PARAM", "inline must be summary, preview, or full")
+    if params.get("mode") != "batch" and live_status(project).get("alive"):
+        return observe_from_live(project, params)
+    if params.get("mode") == "live":
+        return observe_from_live(project, params)
     include = params.get("include") or []
     if isinstance(include, str):
         include = [include]
@@ -646,6 +663,77 @@ def observe_runtime(project: Path, params: Dict[str, Any], timeout: float) -> Di
         log_lines=log_lines,
         alive=False,
     )
+
+
+def project_run(project: Path, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    mode = params.get("mode") or "live"
+    if mode == "batch":
+        return observe_runtime(project, {**params, "mode": "batch"}, timeout)
+    if mode != "live":
+        return error_envelope("INVALID_PARAM", "project_run mode must be live or batch")
+    status = live_status(project)
+    if status.get("alive"):
+        return error_envelope(
+            "NOT_ALLOWED",
+            "A live dmengine is already running for this project.",
+            "Call project_stop first.",
+            pid=status.get("pid"),
+        )
+    engine = find_engine(params.get("engine"), project)
+    bob = find_bob(params.get("bob"), project)
+    if not params.get("no_build"):
+        build_payload = check_project(project, bob, prefer_editor=False, timeout=timeout)
+        if not build_payload.get("success"):
+            return error_envelope(
+                "HANDLER_ERROR",
+                "check failed before project_run",
+                issues=build_payload.get("issues") or [],
+            )
+    if not engine:
+        return error_envelope("ENGINE_UNREACHABLE", "dmengine not found. Set DEFOLD_ENGINE or pass --engine.")
+    control = control_dir(project)
+    control.mkdir(parents=True, exist_ok=True)
+    log_path = engine_log_path(project)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    projectc = project / "build" / "default" / "game.projectc"
+    args = [str(engine)]
+    if projectc.is_file():
+        args.append(str(projectc))
+    args.append(f"--agent-control={control}")
+    args.extend(params.get("engine_arg") or [])
+    log_file = log_path.open("w", encoding="utf-8")
+    popen_kwargs: Dict[str, Any] = {
+        "cwd": str(project),
+        "stdout": log_file,
+        "stderr": subprocess.STDOUT,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    try:
+        proc = subprocess.Popen(args, **popen_kwargs)
+    finally:
+        log_file.close()
+    time.sleep(0.25)
+    if proc.poll() is not None:
+        log_text = ""
+        if log_path.is_file():
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        return error_envelope(
+            "ENGINE_UNREACHABLE",
+            f"dmengine exited immediately with code {proc.returncode}.",
+            "Rebuild a debug dmengine that accepts --agent-control.",
+            log=log_text[-4000:],
+        )
+    record = {
+        "pid": proc.pid,
+        "mode": "live",
+        "control_dir": str(control),
+        "log_path": str(log_path),
+        "command": args,
+        "captured_at": utc_now(),
+    }
+    write_engine_record(project, record)
+    return ok_envelope({**record, "source": "runtime"}, readiness="running")
 
 
 def cmd_observe(args: argparse.Namespace) -> int:
@@ -826,6 +914,29 @@ def cmd_batch(args: argparse.Namespace) -> int:
     return cmd_command(args)
 
 
+def cmd_project_run(args: argparse.Namespace) -> int:
+    project = find_project(Path(args.project) if args.project else None)
+    result = project_run(
+        project,
+        {
+            "mode": args.mode,
+            "no_build": args.no_build,
+            "engine": args.engine,
+            "bob": args.bob,
+            "engine_arg": args.engine_arg or [],
+            "frames": args.frames,
+        },
+        args.timeout,
+    )
+    return _dump_command(result, args.out)
+
+
+def cmd_project_stop(args: argparse.Namespace) -> int:
+    project = find_project(Path(args.project) if args.project else None)
+    result = dispatch_command(project, "project_stop", {}, args.timeout)
+    return _dump_command(result, args.out)
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     project = find_project(Path(args.project) if args.project else None)
     return serve_stdio(project, args.timeout)
@@ -965,7 +1076,17 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--params")
     batch.set_defaults(func=cmd_batch)
 
-    mcp = sub.add_parser("mcp", parents=[common], help="stdio MCP (Content-Length JSON-RPC). No game plugin.")
+    project_run_cmd = sub.add_parser("project-run", parents=[common], help="Start dmengine. live uses file control, not HTTP.")
+    project_run_cmd.add_argument("--mode", choices=("live", "batch"), default="live")
+    project_run_cmd.add_argument("--no-build", action="store_true")
+    project_run_cmd.add_argument("--frames", type=int, default=30, help="Only used for mode=batch.")
+    project_run_cmd.add_argument("--engine-arg", action="append")
+    project_run_cmd.set_defaults(func=cmd_project_run)
+
+    project_stop_cmd = sub.add_parser("project-stop", parents=[common], help="Stop the CLI-owned live dmengine.")
+    project_stop_cmd.set_defaults(func=cmd_project_stop)
+
+    mcp = sub.add_parser("mcp", parents=[common], help="stdio MCP (Content-Length JSON-RPC). No HTTP MCP.")
     mcp.set_defaults(func=cmd_mcp)
     return parser
 
