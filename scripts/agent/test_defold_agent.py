@@ -1771,6 +1771,20 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("MISSING_PARAM", missing_get["error"]["code"])
             missing_set = dispatch_command(project, "project_manage", {"op": "settings_set", "value": "9.9"}, 1)
             self.assertEqual("MISSING_PARAM", missing_set["error"]["code"])
+            missing_prop = dispatch_command(
+                project,
+                "gameobject_manage",
+                {"op": "set_property", "collection": "/main/main.collection", "id": "cube", "value": 1},
+                2,
+            )
+            self.assertEqual("MISSING_PARAM", missing_prop["error"]["code"])
+            missing_comp = dispatch_command(
+                project,
+                "component_manage",
+                {"op": "set_property", "collection": "/main/main.collection", "id": "cube", "property": "text", "value": "x"},
+                2,
+            )
+            self.assertEqual("MISSING_PARAM", missing_comp["error"]["code"])
             escaped = dispatch_command(
                 project,
                 "filesystem_manage",
