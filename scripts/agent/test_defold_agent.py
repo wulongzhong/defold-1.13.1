@@ -1451,6 +1451,18 @@ class ToolQualityTest(unittest.TestCase):
                 "MISSING_PARAM",
                 dispatch_command(project, "filesystem_manage", {"op": "write_text", "path": "/main/notext.txt"}, 2)["error"]["code"],
             )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "filesystem_manage", {"op": "write_text", "text": "x"}, 2)["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "filesystem_manage", {"op": "move", "path": "/main/a.script"}, 2)["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "filesystem_manage", {"op": "read_text"}, 2)["error"]["code"],
+            )
             configure_mcp(["atlas"])
             try:
                 listed = handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, project, 2)

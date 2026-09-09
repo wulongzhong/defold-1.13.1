@@ -1040,6 +1040,8 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             op = params.get("op")
             if op == "read_text":
                 path = params.get("path")
+                if not path:
+                    return error_envelope("MISSING_PARAM", "read_text needs path")
                 file_path = project_file(project, path)
                 from agent_runtime import is_snapshot_path
 
