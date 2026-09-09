@@ -40,6 +40,7 @@ HIERARCHY_DEFAULT_LIMIT = 200
 FIND_DEFAULT_LIMIT = 50
 
 RE_SERVICE_PORT = re.compile(r"Engine service started on port (\d+)")
+RE_SNAPSHOT_ID_FILE = re.compile(r"^\d{8}T\d{6}Z-.+\.json$")
 
 QUERY_OPS = (
     "list",
@@ -199,12 +200,56 @@ def encoded_size(payload: Any) -> int:
     return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
 
+def resolve_user_path(project: Path, dest: Any) -> Optional[Path]:
+    if not dest:
+        return None
+    text = str(dest)
+    if text.startswith("/") and not text.startswith("//") and not (len(text) > 2 and text[1] == ":"):
+        return project / text.lstrip("/").replace("/", os.sep)
+    path = Path(text)
+    if not path.is_absolute():
+        return project / text.replace("/", os.sep)
+    return path
+
+
+def snapshot_dest_path(project: Path, params: Dict[str, Any]) -> Optional[Path]:
+    dest = params.get("dest")
+    if not dest:
+        return None
+    include = params.get("include") or []
+    if isinstance(include, str):
+        include = [include]
+    path = resolve_user_path(project, dest)
+    if path is None:
+        return None
+    if path.suffix.lower() == ".png" or ("screenshot" in include and path.suffix.lower() != ".json"):
+        return None
+    return path
+
+
+def wants_truncate(params: Dict[str, Any]) -> bool:
+    value = params.get("truncate", True)
+    return value not in (False, "false", 0, "0")
+
+
+def reject_if_inline_too_large(params: Dict[str, Any], payload: Any, node_count: int) -> Optional[Dict[str, Any]]:
+    if wants_truncate(params):
+        return None
+    if node_count > NODE_HARD_CAP or encoded_size(payload) > INLINE_BUDGET:
+        return error_envelope(
+            "INLINE_TOO_LARGE",
+            f"Query result exceeds {NODE_HARD_CAP} nodes or {INLINE_BUDGET} bytes.",
+            "Pass truncate=true or narrow id/limit.",
+        )
+    return None
+
+
 def prune_snapshots(project: Path) -> None:
     directory = snapshots_dir(project)
     if not directory.is_dir():
         return
     files = sorted(
-        (path for path in directory.glob("*.json") if path.name != "latest.json"),
+        (path for path in directory.glob("*.json") if RE_SNAPSHOT_ID_FILE.match(path.name)),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
@@ -253,6 +298,7 @@ def wrap_engine_dump(
     issues: Optional[List[Any]] = None,
     screenshot: Optional[Path] = None,
     snapshot_id: Optional[str] = None,
+    dest: Optional[Path] = None,
 ) -> Dict[str, Any]:
     if not raw_path.is_file():
         raise FileNotFoundError(str(raw_path))
@@ -260,7 +306,8 @@ def wrap_engine_dump(
     snap_id = snapshot_id or new_snapshot_id()
     directory = snapshots_dir(project)
     directory.mkdir(parents=True, exist_ok=True)
-    dest = directory / f"{snap_id}.json"
+    written = directory / f"{snap_id}.json"
+    extra_dest = Path(dest) if dest is not None else None
     record: Dict[str, Any] = {
         "schema": SNAPSHOT_SCHEMA,
         "id": snap_id,
@@ -279,8 +326,12 @@ def wrap_engine_dump(
         record["screenshot"] = str(png_dest)
         latest_png = directory / "latest.png"
         shutil.copy2(png_dest, latest_png)
-    dest.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
-    shutil.copy2(dest, directory / "latest.json")
+    written.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+    shutil.copy2(written, directory / "latest.json")
+    if extra_dest is not None:
+        extra_dest.parent.mkdir(parents=True, exist_ok=True)
+        if extra_dest.resolve() != written.resolve():
+            shutil.copy2(written, extra_dest)
     prune_snapshots(project)
     return record
 
@@ -579,13 +630,18 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         if node is None:
             return error_envelope("NOT_FOUND", f"Runtime node '{go_id}' was not found")
         depth = int(params.get("depth") if params.get("depth") is not None else 8)
+        offset = int(params.get("offset") or 0)
         limit = min(int(params.get("limit") or PREVIEW_LIMIT), NODE_HARD_CAP)
+        oversized = reject_if_inline_too_large(params, node, count_nodes(node))
+        if oversized:
+            return oversized
         tree, truncated, used = subtree(node, depth, limit)
         return ok_envelope(
             {
                 "node": tree,
                 "truncated": truncated,
                 "count": used,
+                "offset": offset,
                 "limit": limit,
                 "source": "runtime",
                 "snapshot": record.get("id"),
@@ -593,6 +649,7 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if op == "find":
+        offset = int(params.get("offset") or 0)
         limit = min(int(params.get("limit") or FIND_DEFAULT_LIMIT), NODE_HARD_CAP)
         matches: List[Dict[str, Any]] = []
         total = 0
@@ -600,18 +657,23 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             if not match_find(node, params):
                 continue
             total += 1
+            if total <= offset:
+                continue
             if len(matches) < limit:
                 matches.append(shallow_node(node))
-        return ok_envelope(
-            {
-                "matches": matches,
-                "total": total,
-                "limit": limit,
-                "truncated": total > len(matches),
-                "source": "runtime",
-                "snapshot": record.get("id"),
-            }
-        )
+        payload = {
+            "matches": matches,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "truncated": offset + len(matches) < total,
+            "source": "runtime",
+            "snapshot": record.get("id"),
+        }
+        oversized = reject_if_inline_too_large(params, payload, total)
+        if oversized:
+            return oversized
+        return ok_envelope(payload)
 
     if op == "get_path":
         pointer = params.get("path") or params.get("pointer")
@@ -898,6 +960,7 @@ def observe_from_live(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         target={"pid": status.get("pid"), "mode": "live"},
         issues=[],
         screenshot=shot if shot and shot.is_file() else None,
+        dest=snapshot_dest_path(project, params),
     )
     log_lines = read_engine_log_lines(project)
     return observe_envelope(
@@ -1281,7 +1344,11 @@ def runtime_get_hierarchy(project: Path, params: Dict[str, Any]) -> Dict[str, An
         return error_envelope("SNAPSHOT_NOT_FOUND", f"Snapshot not found: {error}")
     offset = int(params.get("offset") or 0)
     limit = min(int(params.get("limit") or HIERARCHY_DEFAULT_LIMIT), NODE_HARD_CAP)
-    nodes, truncated = collect_preview(scene_graph_of(record), offset + limit)
+    graph = scene_graph_of(record)
+    oversized = reject_if_inline_too_large(params, graph, count_nodes(graph))
+    if oversized:
+        return oversized
+    nodes, truncated = collect_preview(graph, offset + limit)
     sliced = nodes[offset : offset + limit]
     return ok_envelope(
         {
@@ -1289,7 +1356,7 @@ def runtime_get_hierarchy(project: Path, params: Dict[str, Any]) -> Dict[str, An
             "offset": offset,
             "limit": limit,
             "truncated": truncated or offset + len(sliced) < len(nodes),
-            "total_estimate": count_nodes(scene_graph_of(record)),
+            "total_estimate": count_nodes(graph),
             "source": "runtime",
             "snapshot": record.get("id"),
         }

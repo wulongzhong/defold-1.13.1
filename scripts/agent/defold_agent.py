@@ -43,6 +43,7 @@ from agent_runtime import (
     live_status,
     observe_envelope,
     observe_from_live,
+    snapshot_dest_path,
     utc_now,
     wrap_engine_dump,
     write_engine_json,
@@ -713,6 +714,7 @@ def observe_runtime(project: Path, params: Dict[str, Any], timeout: float) -> Di
         target=run_payload.get("engine"),
         issues=run_payload.get("issues") or [],
         screenshot=shot if shot and shot.is_file() else None,
+        dest=snapshot_dest_path(project, params),
     )
     log_lines = [line for line in (run_payload.get("log") or "").splitlines() if line]
     return observe_envelope(

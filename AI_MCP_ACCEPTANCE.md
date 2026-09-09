@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P5** 已在打包编辑器上按 ID 实跑。P5 覆盖找不到引擎、dump 没写成、快照只留 8 份、跨工程 session、运行时 `NOT_FOUND`、命中后 `status` 仍带 frames。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P6** 已在打包编辑器上按 ID 实跑。P6 覆盖查询分页、`dest` 不轮转、`truncate=false`、`readiness=running`、按 url 钉 session、以及 `MISSING_PARAM` / `UNKNOWN_OP`。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P5 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P6 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P5 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P5** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P6** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -119,6 +119,7 @@ P1–P5 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。
 | L0-10 | P2 | R2 | `resources/list` + `resources/read` `defold://editor/state` 与 `defold://project/mcp-config` | list 还含 `defold://collection/hierarchy`。state 摘要有 title；mcp-config 文本无 `http://` / `https://` |
 | L0-11 | P3 | §9、L0 | 置 `building.lock` 后 `script_create` | `status=error`，`EDITOR_NOT_READY`，`sub_code=building`。`editor_state` 仍 ok。测完删锁 |
 | L0-12 | P3 | §9、L0 | 只写 `dump.request`（无 `dump.ready`）后 `script_create` | `status=error`，`EDITOR_NOT_READY`，`sub_code=observing`。测完删 request |
+| L0-13 | P6 | §9 | live 之后再 `editor_state` | 信封 `readiness=running` |
 
 ### 5.1 L1 作者态
 
@@ -154,6 +155,8 @@ P1–P5 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。
 | L1-26 | P2 | §7.8 | `filesystem_manage delete` 指向 snapshot json | `status=error`，`NOT_ALLOWED` |
 | L1-27 | P2 | §8.3 | `collection_manage add_instance` 临时 GO | hierarchy 含该 id；测完删掉 |
 | L1-28 | P2 | §8.4 | `batch_execute`：filesystem 写 + `project_check` | `status=ok`；`data.atomic is false` |
+| L1-29 | P6 | §10 | `gameobject_manage` 假 op | `UNKNOWN_OP` |
+| L1-30 | P6 | §10 | `gameobject_get_properties` 不传 id | `MISSING_PARAM` |
 
 ### 5.2 L2 编译诊断
 
@@ -218,6 +221,11 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L4-22 | P5 | §10 | `project_run mode=batch` `no_build=true`，`engine` 是会立刻退出、不写 dump 的可执行文件 | `RUNTIME_DUMP_MISSING` |
 | L4-23 | P5 | §10 | `runtime_snapshot_query get_node` 假 id | `NOT_FOUND` |
 | L4-24 | P5 | §7.8 | 快照目录先多写再 observe | `*.json` 除去 `latest.json` 与 `_raw.json` 不超过 8 个 |
+| L4-25 | P6 | §7.8、§8.4 | `runtime_snapshot_query op=get_subtree` `id=player` `offset=0` `limit=1` | 回包有 `offset`/`limit`；`truncated` 是 bool |
+| L4-26 | P6 | §7.8、§8.4 | `runtime_snapshot_query op=find` `offset=0` `limit=1` | 回包有 `offset`/`limit`；`truncated` 是 bool |
+| L4-27 | P6 | §7.8 | `runtime_observe dest=` 工程内 json，再多写快照触发轮转 | dest 文件仍在且含 `scene_graph` |
+| L4-28 | P6 | §7.8、§10 | 对一份 ≥257 节点的快照 `get_subtree` `truncate=false` | `INLINE_TOO_LARGE` |
+| L4-29 | P6 | §7.3 | `runtime_get_hierarchy` 不传 limit | 回包 `limit==200` |
 
 ### 5.5 L5 干预
 
@@ -244,6 +252,7 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L5-17 | P4 | §11 R3 | `runtime_input` 17 个 key | `INVALID_PARAM` |
 | L5-18 | P5 | §7.5、§8.1 | `session_activate` 指向其它工程的 editor | `NOT_ALLOWED` |
 | L5-19 | P5 | §11 R3 | L5-12 命中后再 `runtime_debug op=status` | `frames` 非空；`stack_reason=breakpoint`；`prompt` 不为 true |
+| L5-20 | P6 | §7.5、§8.1 | `session_activate` 用本工程 editor 的 url | `status=ok` |
 
 L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功仍要验 PNG。
 
@@ -290,10 +299,10 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 
 | Tool | 层 | 覆盖用例 | 最低读回 |
 | --- | --- | --- | --- |
-| `editor_state` | L0 | L0-01；P2：L0-09 | title / root / commands；live 后 engine.alive |
+| `editor_state` | L0 | L0-01；P2：L0-09；P6：L0-13 | title / root / commands；live 后 engine.alive 与 readiness=running |
 | `project_doctor` | L0 | L0-02、ENV-04 | ready / mcp / java_required |
 | `session_manage` | L0 | L0-03 | 含本工程 editor |
-| `session_activate` | L0 | L0-03；P2：L5-10；P5：L5-18 | ok；假 id 为 UNKNOWN_TARGET；其它工程 NOT_ALLOWED |
+| `session_activate` | L0 | L0-03；P2：L5-10；P5：L5-18；P6：L5-20 | ok；假 id 为 UNKNOWN_TARGET；其它工程 NOT_ALLOWED；可按 url 钉 |
 | `api_manage` | L0 | L0-04；P3：L3-06 | 文档命中；关编辑器走引擎 `/*#` |
 | `editor_manage` | L0 | L0-05、ENV-09 | mcp_config 无 URL。**不验 `quit`**（会杀掉验收进程） |
 | `collection_open` | L1 | L1-01 | ok |
@@ -301,8 +310,8 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `collection_save` | L1 | L1-13 | 磁盘含 id |
 | `collection_manage` | L1 | L1-10、L1-11、L1-12；P2：L1-27 | create / remove / get_roots / add_instance |
 | `gameobject_create` | L1 | L1-02、L1-07 | hierarchy + position |
-| `gameobject_get_properties` | L1 | L1-02、L1-03、L1-16 | source + position / components |
-| `gameobject_manage` | L1 | L1-03、L1-04；P1：L1-17、L1-18 | set_property 读回；find 命中 |
+| `gameobject_get_properties` | L1 | L1-02、L1-03、L1-16；P6：L1-30 | source + position / components；缺 id 为 MISSING_PARAM |
+| `gameobject_manage` | L1 | L1-03、L1-04；P1：L1-17、L1-18；P6：L1-29 | set_property 读回；find 命中；假 op 为 UNKNOWN_OP |
 | `component_add` | L1 | L1-09 | 有 label |
 | `component_manage` | L1 | L1-19 | P1 |
 | `script_create` | L1 | L1-05；P3：L0-11、L0-12 | 文件 + init；building/observing 拒写 |
@@ -320,9 +329,9 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump |
 | `project_stop` | L3 | L3-04、L5-08 | 进程死 |
 | `runtime_state` | L4 | L4-03 | alive |
-| `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24 | 句柄 + 摘要；无 live 拒绝；快照只留 8 |
-| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23 | get_node 是 GO；假 snapshot / 假节点；get_path 超预算；list_ids 分页 |
-| `runtime_get_hierarchy` | L4 | L4-04；P3：L4-18 | source=runtime；分页 truncated |
+| `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24；P6：L4-27 | 句柄 + 摘要；无 live 拒绝；快照只留 8；dest 不轮转 |
+| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23；P6：L4-25、L4-26、L4-28 | get_node 是 GO；假 snapshot / 假节点；get_path 超预算；list_ids / get_subtree / find 分页；truncate=false 超上限 |
+| `runtime_get_hierarchy` | L4 | L4-04；P3：L4-18；P6：L4-29 | source=runtime；分页 truncated；默认 limit 200 |
 | `runtime_get_properties` | L4 | L4-05 | source=runtime |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
 | `runtime_screenshot` | L5 | L5-07 | 可选 PNG |
@@ -375,6 +384,7 @@ SKIP  L5-07  optional screenshot
   "p3_failed": [],
   "p4_failed": [],
   "p5_failed": [],
+  "p6_failed": [],
   "p1_skipped": []
 }
 ```

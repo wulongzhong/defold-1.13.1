@@ -316,6 +316,55 @@ class RuntimeSnapshotTest(unittest.TestCase):
             result = query_snapshot(project, {"op": "find", "type": "spritec"})
             self.assertEqual("ok", result["status"])
             self.assertEqual("sprite", result["data"]["matches"][0]["id"])
+            paged = query_snapshot(project, {"op": "find", "type": "goc", "offset": 0, "limit": 1})
+            self.assertEqual(0, paged["data"]["offset"])
+            self.assertEqual(1, paged["data"]["limit"])
+            self.assertTrue(paged["data"]["truncated"])
+            subtree = query_snapshot(project, {"op": "get_subtree", "id": "cube", "offset": 0, "limit": 1})
+            self.assertEqual(0, subtree["data"]["offset"])
+            self.assertEqual(1, subtree["data"]["limit"])
+            self.assertIsInstance(subtree["data"]["truncated"], bool)
+
+    def test_dest_survives_prune_and_truncate_false(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from agent_runtime import prune_snapshots, snapshots_dir
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, record = self._project_with_snapshot(tmp)
+            dest = project / ".internal" / "agent" / "kept-observe.json"
+            raw = project / "raw.json"
+            wrap_engine_dump(project, raw, mode="batch", frame=1, target={}, dest=dest)
+            self.assertTrue(dest.is_file())
+            self.assertIn("scene_graph", dest.read_text(encoding="utf-8"))
+            snap_dir = snapshots_dir(project)
+            for i in range(10):
+                dummy = snap_dir / f"19990101T00000{i}Z-pad.json"
+                dummy.write_text(json.dumps({"schema": 1, "id": dummy.stem, "scene_graph": {"id": "pad"}}), encoding="utf-8")
+            wrap_engine_dump(project, raw, mode="batch", frame=2, target={})
+            prune_snapshots(project)
+            self.assertTrue(dest.is_file())
+            wide = {
+                "schema": 1,
+                "id": "wide-nodes",
+                "source": "runtime",
+                "scene_graph": {
+                    "id": "wide",
+                    "type": "goc",
+                    "children": [{"id": f"n{i}", "type": "goc", "children": []} for i in range(257)],
+                },
+            }
+            (snap_dir / "wide-nodes.json").write_text(json.dumps(wide), encoding="utf-8")
+            blocked = query_snapshot(project, {"op": "get_subtree", "id": "wide", "snapshot": "wide-nodes", "truncate": False})
+            self.assertEqual("error", blocked["status"])
+            self.assertEqual("INLINE_TOO_LARGE", blocked["error"]["code"])
+            allowed = query_snapshot(project, {"op": "get_subtree", "id": "wide", "snapshot": "wide-nodes", "limit": 1})
+            self.assertEqual("ok", allowed["status"])
+            self.assertTrue(allowed["data"]["truncated"])
+            hierarchy = __import__("agent_runtime", fromlist=["runtime_get_hierarchy"]).runtime_get_hierarchy(project, {})
+            self.assertEqual(200, hierarchy["data"]["limit"])
 
     def test_get_path(self):
         import tempfile
@@ -779,6 +828,9 @@ class ToolQualityTest(unittest.TestCase):
             pinned = dispatch_command(project, "session_activate", {"id": "demo@abcd1234"}, 1)
             self.assertEqual("ok", pinned["status"])
             self.assertEqual("editor", pinned["data"]["session"]["kind"])
+            by_url = dispatch_command(project, "session_activate", {"url": "http://127.0.0.1:59999"}, 1)
+            self.assertEqual("ok", by_url["status"])
+            self.assertEqual("editor", by_url["data"]["session"]["kind"])
             missing = dispatch_command(project, "session_activate", {"id": "no-such-session"}, 1)
             self.assertEqual("error", missing["status"])
             self.assertEqual("UNKNOWN_TARGET", missing["error"]["code"])

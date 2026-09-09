@@ -110,7 +110,10 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "items": {"type": "string", "enum": ["screenshot"]},
                 "description": "Optional extras. Screenshot is not default.",
             },
-            "dest": {"type": "string", "description": "Optional PNG path when include contains screenshot."},
+            "dest": {
+                "type": "string",
+                "description": "Snapshot JSON path, or PNG path when include contains screenshot. Dest files are not rotated.",
+            },
             "no_build": {"type": "boolean", "default": False},
             "debug_collisions": {"type": "boolean", "default": False},
         },
@@ -135,6 +138,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "depth": {"type": "integer"},
             "limit": {"type": "integer"},
             "offset": {"type": "integer"},
+            "truncate": {"type": "boolean", "default": True},
         },
     },
     "runtime_get_hierarchy": {
@@ -150,6 +154,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "depth": {"type": "integer", "default": 8},
             "offset": {"type": "integer", "default": 0},
             "limit": {"type": "integer", "default": 200},
+            "truncate": {"type": "boolean", "default": True},
         },
     },
     "runtime_get_properties": {
