@@ -1429,6 +1429,8 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual(1, len(page["data"]["matches"]))
             self.assertNotEqual(result["data"]["matches"], page["data"]["matches"])
+            missing = dispatch_command(project, "filesystem_manage", {"op": "search"}, 2)
+            self.assertEqual("MISSING_PARAM", missing["error"]["code"])
             configure_mcp(["atlas"])
             try:
                 listed = handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, project, 2)
@@ -1749,6 +1751,10 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+            missing_get = dispatch_command(project, "project_manage", {"op": "settings_get"}, 1)
+            self.assertEqual("MISSING_PARAM", missing_get["error"]["code"])
+            missing_set = dispatch_command(project, "project_manage", {"op": "settings_set", "value": "9.9"}, 1)
+            self.assertEqual("MISSING_PARAM", missing_set["error"]["code"])
             escaped = dispatch_command(
                 project,
                 "filesystem_manage",
