@@ -689,6 +689,23 @@ def reject_write_if_gated(project: Path, command: str, params: Dict[str, Any]) -
     )
 
 
+def reject_snapshot_read(project: Path, command: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if command != "filesystem_manage" or (params or {}).get("op") != "read_text":
+        return None
+    path = (params or {}).get("path")
+    if not path:
+        return None
+    from agent_runtime import is_snapshot_path
+
+    if is_snapshot_path(project, project_file(project, path)):
+        return error_envelope(
+            "NOT_ALLOWED",
+            "Do not read snapshot files as text.",
+            "Use runtime_snapshot_query to take a slice.",
+        )
+    return None
+
+
 def overlay_readiness(project: Path, result: Dict[str, Any]) -> Dict[str, Any]:
     computed = compute_readiness(project)
     if computed in {"building", "observing"}:
@@ -2066,6 +2083,9 @@ def dispatch_command(
     blocked = reject_write_if_gated(project, command, params)
     if blocked is not None:
         return blocked
+    blocked = reject_snapshot_read(project, command, params)
+    if blocked is not None:
+        return overlay_readiness(project, blocked)
     if command == "editor_manage" and params.get("op") == "mcp_config":
         from agent_mcp import mcp_client_config
 

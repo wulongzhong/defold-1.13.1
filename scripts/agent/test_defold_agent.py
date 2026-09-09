@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import unittest
 
-from agent_ops import disk_command, dispatch_command, parse_collection_hierarchy, patch_text
+from agent_ops import disk_command, dispatch_command, parse_collection_hierarchy, patch_text, reject_snapshot_read
 from agent_runtime import (
     INLINE_BUDGET,
     observe_envelope,
@@ -151,6 +151,12 @@ class DiskCommandTest(unittest.TestCase):
             )
             self.assertEqual("error", blocked["status"])
             self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+            gated = reject_snapshot_read(
+                project,
+                "filesystem_manage",
+                {"op": "read_text", "path": "/.internal/agent/snapshots/latest.json"},
+            )
+            self.assertEqual("NOT_ALLOWED", gated["error"]["code"])
 
 
 class RuntimeSnapshotTest(unittest.TestCase):

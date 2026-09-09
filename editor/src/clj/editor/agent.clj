@@ -969,6 +969,10 @@
     (case op
       "read_text" (let [path (sanitize-proj-path (require-string params :path))
                         file (project-file workspace path)]
+                    (when (string/starts-with? path "/.internal/agent/snapshots/")
+                      (fail! "NOT_ALLOWED"
+                             "Do not read snapshot files as text."
+                             "Use runtime_snapshot_query to take a slice."))
                     (if-not (.isFile file)
                       (fail! "NOT_FOUND" (str "File not found: " path) nil)
                       {:path path

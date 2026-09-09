@@ -190,3 +190,7 @@ Do not curl the editor as your main protocol; let `defold_agent.py` do that.
 6. `diagnostics` if something failed; `compare_authoring` if a GO is not where the collection says.
 7. If it is live and you need to press a key or pause a frame: `input` / `debug`. `eval --confirm` only when a read-only Lua check is the point.
 8. Change one thing. Repeat.
+
+## Packaged-editor acceptance
+
+The pass/fail contract is [`AI_MCP_ACCEPTANCE.md`](../../AI_MCP_ACCEPTANCE.md). Run cases by **ID** (L4-06, L1-15, …). Do not invent extra checks in chat. If a check is missing, add it to that doc first.

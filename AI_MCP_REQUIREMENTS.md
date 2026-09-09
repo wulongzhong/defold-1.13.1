@@ -55,6 +55,8 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 
 对用户的观感：问「现在玩家在哪」，得到的是运行时 `world_position`，不是 collection 文件里的初始值。
 
+机器可判定的验收合同是 [`AI_MCP_ACCEPTANCE.md`](AI_MCP_ACCEPTANCE.md)。没有编号的检查、只看 `status == ok`，都不算验收。要加断言，先改那份合同。
+
 ---
 
 ## 4. 硬约束（沿用，不重开）
