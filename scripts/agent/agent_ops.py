@@ -143,13 +143,19 @@ def editor_command(
     if not endpoint:
         return None
     url, token = endpoint
-    status, body = http_json(
-        f"{url}/agent/command",
-        token,
-        method="POST",
-        timeout=timeout,
-        body={"command": command, "params": params or {}},
-    )
+    try:
+        status, body = http_json(
+            f"{url}/agent/command",
+            token,
+            method="POST",
+            timeout=timeout,
+            body={"command": command, "params": params or {}},
+        )
+    except TimeoutError:
+        return error_envelope(
+            "HANDLER_ERROR",
+            f"Editor /agent/command timed out after {timeout}s ({command}).",
+        )
     if status == 404:
         return None
     if status == 401:
@@ -339,8 +345,20 @@ def extract_brace_block(text: str, start: int) -> Optional[str]:
     return text[span[0] : span[1]]
 
 
+_PROTO_UNESCAPE = {"n": "\n", "t": "\t", '"': '"', "\\": "\\"}
+
+
 def unescape_proto(value: str) -> str:
-    return value.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\\\", "\\")
+    out: List[str] = []
+    index = 0
+    while index < len(value):
+        if value[index] == "\\" and index + 1 < len(value):
+            out.append(_PROTO_UNESCAPE.get(value[index + 1], value[index + 1]))
+            index += 2
+            continue
+        out.append(value[index])
+        index += 1
+    return "".join(out)
 
 
 def escape_proto(value: str) -> str:
@@ -1348,7 +1366,7 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                     return error_envelope("NOT_ALLOWED", "Referenced components have no embedded data to set")
                 from agent_domain import set_scalar
 
-                new_inner = set_scalar(inner, str(key), str(params.get("value", "")))
+                new_inner = set_scalar(inner, str(key), params.get("value", ""))
                 new_comp = replace_data_field(comp_block, new_inner)
                 go_text = go_text.replace(comp_block, new_comp, 1)
                 if wrapper:
@@ -1903,6 +1921,11 @@ def hot_reload_payload(project: Path, timeout: float) -> Dict[str, Any]:
             "hot_reload needs the open editor.",
             "With only a CLI live engine, call project_stop then project_run after script_patch.",
         )
+    editor = editor_command(project, "project_manage", {"op": "hot_reload"}, timeout)
+    if editor is not None and editor.get("status") == "ok":
+        data = dict(editor.get("data") or {})
+        data["source"] = "editor"
+        return ok_envelope(data)
     url, token = endpoint
     status, body = http_json(f"{url}/command/hot-reload", token, method="POST", timeout=timeout, body={})
     if status in {200, 202}:
@@ -2115,6 +2138,23 @@ def dispatch_command(
                 )
             return overlay_readiness(project, session_list_payload(project))
         return overlay_readiness(project, activate_session(project, params))
+    if command == "component_manage" and (params or {}).get("op") == "set_property":
+        result = disk_command(project, command, params)
+        collection = (params or {}).get("collection") or (params or {}).get("path")
+        if result.get("status") == "ok" and collection and read_editor_endpoint(project) is not None:
+            try:
+                text = project_file(project, collection).read_text(encoding="utf-8")
+                editor_command(
+                    project,
+                    "filesystem_manage",
+                    {"op": "write_text", "path": collection, "text": text},
+                    timeout,
+                )
+                if isinstance(result.get("data"), dict):
+                    result["data"]["source"] = "editor"
+            except OSError:
+                pass
+        return overlay_readiness(project, result)
     if command in RUNTIME_COMMANDS:
         return handle_runtime_command(project, command, params, timeout)
     from agent_domain import DOMAIN_COMMANDS, handle_domain_command

@@ -182,6 +182,40 @@ def format_input_request(params: Dict[str, Any]) -> Tuple[str, Optional[Dict[str
     return "\n".join(lines) + "\n", None
 
 
+def held_input_release_body(params: Dict[str, Any]) -> Optional[str]:
+    lines: List[str] = []
+    keys = params.get("keys") or params.get("key")
+    if isinstance(keys, str):
+        keys = [keys]
+    if isinstance(keys, list):
+        for item in keys:
+            if isinstance(item, dict):
+                name = str(item.get("key") or item.get("name") or "")
+                mode = str(item.get("mode") or "down")
+            else:
+                name = str(item)
+                mode = "down"
+            if mode in {"", "down"} and is_known_key(name):
+                lines.append(f"key={normalize_key_name(name)}:up")
+    buttons = params.get("mouse_buttons") or params.get("mouse_button")
+    if isinstance(buttons, str):
+        buttons = [buttons]
+    if isinstance(buttons, list):
+        for item in buttons:
+            if isinstance(item, dict):
+                name = str(item.get("button") or item.get("name") or "")
+                mode = str(item.get("mode") or "down")
+            else:
+                name = str(item)
+                mode = "down"
+            token = name.strip().lower()
+            if mode in {"", "down"} and token in KNOWN_MOUSE:
+                lines.append(f"mouse_button={token}:up")
+    if not lines:
+        return None
+    return "hold=1\n" + "\n".join(lines) + "\n"
+
+
 def format_debug_request(params: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
     op = str(params.get("op") or "status")
     if op not in DEBUG_OPS:
@@ -277,11 +311,22 @@ def runtime_input(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     ok, extra, fields = parse_ready_text(text)
     if not ok:
         return error_envelope("INVALID_PARAM", extra or "input was rejected")
+    hold = int(fields.get("hold") or params.get("hold") or 1)
+    release = held_input_release_body(params)
+    if release:
+        time.sleep(min(max(hold, 1) / 30.0 + 0.15, 2.0))
+        try:
+            request_live_control(project, "input", release, float(params.get("timeout") or DUMP_WAIT_SEC))
+        except TimeoutError:
+            return error_envelope(
+                "AGENT_CONTROL_TIMEOUT",
+                "Live engine did not release held input. Rebuild dmengine with --agent-control.",
+            )
     return ok_envelope(
         {
             "source": "runtime",
             "applied": int(fields.get("applied") or 0),
-            "hold": int(fields.get("hold") or params.get("hold") or 1),
+            "hold": hold,
             "kind": "input",
         },
         readiness="running",

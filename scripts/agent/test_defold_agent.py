@@ -10,7 +10,16 @@ from __future__ import annotations
 
 import unittest
 
-from agent_ops import disk_command, dispatch_command, parse_collection_hierarchy, patch_text, reject_snapshot_read
+from agent_ops import (
+    decode_data_field,
+    disk_command,
+    dispatch_command,
+    encode_data_lines,
+    parse_collection_hierarchy,
+    patch_text,
+    reject_snapshot_read,
+    unescape_proto,
+)
 from agent_runtime import (
     INLINE_BUDGET,
     observe_envelope,
@@ -158,6 +167,50 @@ class DiskCommandTest(unittest.TestCase):
             )
             self.assertEqual("NOT_ALLOWED", gated["error"]["code"])
 
+    def test_unescape_proto_handles_backslash_then_newline(self):
+        self.assertEqual("size {\n", unescape_proto("size {\\n"))
+        inner = 'size {\n  x: 128.0\n}\ntext: "Label"\n'
+        block = 'embedded_components {\n  id: "label"\n  type: "label"\n' + encode_data_lines(inner) + "}\n"
+        self.assertEqual(inner, decode_data_field(block))
+        go = 'components {\n  id: "cube"\n  component: "/main/cube.script"\n}\n' + block
+        instance = 'embedded_instances {\n  id: "cube"\n' + encode_data_lines(go) + "}\n"
+        self.assertEqual(go, decode_data_field(instance))
+
+    def test_embedded_sound_set_property_keeps_collection_valid(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            inner = 'sound: ""\nlooping: 0\ngroup: "master"\n'
+            component = (
+                'embedded_components {\n  id: "sound"\n  type: "sound"\n' + encode_data_lines(inner) + "}\n"
+            )
+            go = 'components {\n  id: "cube"\n  component: "/main/cube.script"\n}\n' + component
+            collection = 'name: "main"\nembedded_instances {\n  id: "cube"\n' + encode_data_lines(go) + "}\n"
+            (project / "main" / "main.collection").write_text(collection, encoding="utf-8")
+            result = disk_command(
+                project,
+                "component_manage",
+                {
+                    "op": "set_property",
+                    "collection": "/main/main.collection",
+                    "id": "cube",
+                    "component": "sound",
+                    "property": "looping",
+                    "value": True,
+                },
+            )
+            self.assertEqual("ok", result["status"], result)
+            text = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            decoded = decode_data_field(text[text.find("embedded_instances") :])
+            self.assertIsNotNone(decoded)
+            self.assertIn("sound", decoded)
+            self.assertIn("looping: 1", decoded)
+            self.assertNotIn('looping: "True"', decoded)
+            self.assertIn("embedded_components", decoded)
+
 
 class RuntimeSnapshotTest(unittest.TestCase):
     def _graph(self):
@@ -272,6 +325,16 @@ class RuntimeSnapshotTest(unittest.TestCase):
             result = query_snapshot(project, {"op": "get_path", "path": "/scene_graph/children/0/world_position"})
             self.assertEqual("ok", result["status"])
             self.assertEqual([10.0, 20.0, 0.0], result["data"]["value"])
+
+    def test_snapshot_live_requires_engine(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            result = query_snapshot(project, {"op": "get_node", "id": "player", "snapshot": "live"})
+            self.assertEqual("error", result["status"])
+            self.assertEqual("ENGINE_NOT_RUNNING", result["error"]["code"])
 
     def test_inline_full_too_large(self):
         import tempfile
@@ -408,6 +471,25 @@ class RuntimeSnapshotTest(unittest.TestCase):
             blocked = project_run(project, {"mode": "live", "no_build": True}, 1)
             self.assertEqual("error", blocked["status"])
             self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+
+    def test_project_run_reuses_projectc_when_editor_closed(self):
+        import tempfile
+        from pathlib import Path
+
+        from defold_agent import project_run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            missing_engine = str(project / "no-such-dmengine")
+            missing = project_run(project, {"mode": "live", "engine": missing_engine}, 1)
+            self.assertEqual("error", missing["status"])
+            self.assertEqual("check failed before project_run", missing["error"]["message"])
+            (project / "build" / "default").mkdir(parents=True)
+            (project / "build" / "default" / "game.projectc").write_bytes(b"cached")
+            reused = project_run(project, {"mode": "live", "engine": missing_engine}, 1)
+            self.assertEqual("error", reused["status"])
+            self.assertEqual("ENGINE_UNREACHABLE", reused["error"]["code"])
+            self.assertNotEqual("check failed before project_run", reused["error"]["message"])
 
     def test_stop_marks_missing_pid_stopped(self):
         import os
@@ -740,6 +822,11 @@ class ToolQualityTest(unittest.TestCase):
             self.assertIsNone(error)
             self.assertIn("key=left", body)
             self.assertIn("hold=4", body)
+            from agent_intervene import held_input_release_body
+
+            release = held_input_release_body({"key": "left", "hold": 24})
+            self.assertIn("key=left:up", release)
+            self.assertIsNone(held_input_release_body({"keys": [{"key": "left", "mode": "up"}]}))
             _, bad_key = format_input_request({"keys": ["not-a-key"]})
             self.assertEqual("INVALID_PARAM", bad_key["error"]["code"])
             _, bp = format_debug_request({"op": "set_breakpoint"})
@@ -906,6 +993,15 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", result["status"], result)
             text = (project / "main" / "main.collection").read_text(encoding="utf-8")
             self.assertIn("camera", text)
+            removed = dispatch_command(
+                project,
+                "camera_manage",
+                {"op": "remove", "collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertEqual("ok", removed["status"], removed)
+            text = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertNotIn("camera", text)
 
     def test_domain_atlas_and_input(self):
         import tempfile

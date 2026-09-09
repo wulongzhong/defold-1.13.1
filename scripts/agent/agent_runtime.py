@@ -501,6 +501,12 @@ def observe_envelope(
 
 
 def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
+    params = dict(params or {})
+    if params.get("snapshot") == "live":
+        refreshed = observe_from_live(project, {"inline": "summary"})
+        if refreshed.get("status") != "ok":
+            return refreshed
+        params["snapshot"] = "latest"
     op = params.get("op") or "summary"
     if op not in QUERY_OPS:
         return error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=list(QUERY_OPS))

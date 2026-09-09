@@ -1,6 +1,6 @@
 # Copyright 2020-2026 The Defold Foundation
 # Licensed under the Defold License version 1.0 (the "License")
-"""Case IDs from AI_MCP_ACCEPTANCE.md. The runner must execute every P0 id."""
+"""Case IDs from AI_MCP_ACCEPTANCE.md. The runner must execute every P0 and P1 id."""
 
 from __future__ import annotations
 

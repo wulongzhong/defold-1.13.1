@@ -739,14 +739,16 @@ def project_run(project: Path, params: Dict[str, Any], timeout: float) -> Dict[s
     bob = find_bob(params.get("bob"), project)
     if not params.get("no_build"):
         build_payload = check_project(
-            project, bob, prefer_editor=prefer_editor_check(project, True), timeout=timeout
+            project, bob, prefer_editor=prefer_editor_check(project), timeout=timeout
         )
+        projectc = project / "build" / "default" / "game.projectc"
         if not build_payload.get("success"):
-            return error_envelope(
-                "HANDLER_ERROR",
-                "check failed before project_run",
-                issues=build_payload.get("issues") or [],
-            )
+            if editor_is_open(project) or not projectc.is_file():
+                return error_envelope(
+                    "HANDLER_ERROR",
+                    "check failed before project_run",
+                    issues=build_payload.get("issues") or [],
+                )
     if not engine:
         return error_envelope("ENGINE_UNREACHABLE", "dmengine not found. Set DEFOLD_ENGINE or pass --engine.")
     control = control_dir(project)

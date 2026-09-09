@@ -362,19 +362,22 @@
       raw)))
 
 (defn- set-node-property! [ctx node-id prop-name raw]
-  (g/with-auto-evaluation-context evaluation-context
-    (let [prop-kw (if (keyword? prop-name) prop-name (keyword prop-name))
-          info (get (:properties (g/node-value node-id :_properties evaluation-context)) prop-kw)]
-      (if-not info
-        (fail! "NOT_FOUND" (str "Property '" (name prop-kw) "' was not found") "Call gameobject_get_properties.")
-        (let [value (coerce-property-value info raw (:workspace ctx))]
-          (g/transact
-            (concat
-              (g/operation-label (str "Agent: set " (name prop-kw)))
-              (g/set-property node-id prop-kw value)))
-          {:id (g/node-value node-id :id)
-           :property (name prop-kw)
-           :value (json-value (g/node-value node-id prop-kw))})))))
+  (let [prop-kw (if (keyword? prop-name) prop-name (keyword prop-name))
+        {:keys [info node-ident]}
+        (g/with-auto-evaluation-context evaluation-context
+          {:info (get (:properties (g/node-value node-id :_properties evaluation-context)) prop-kw)
+           :node-ident (g/node-value node-id :id evaluation-context)})]
+    (if-not info
+      (fail! "NOT_FOUND" (str "Property '" (name prop-kw) "' was not found") "Call gameobject_get_properties.")
+      (let [value (coerce-property-value info raw (:workspace ctx))]
+        (g/transact
+          (concat
+            (g/operation-label (str "Agent: set " (name prop-kw)))
+            (g/set-property node-id prop-kw value)))
+        {:id node-ident
+         :property (name prop-kw)
+         :value (json-value value)
+         :undoable true}))))
 
 (defn- note-batch-file! [^File file]
   (when-let [journal *batch-file-journal*]
@@ -1090,7 +1093,8 @@
         "stop" {:stopped false
                 :hint "POST /command/debugger-stop"}
         "hot_reload" {:reloaded false
-                      :hint "POST /command/hot-reload"}
+                      :source "editor"
+                      :reason "no_play_target"}
         (unknown-op op ["settings_get" "settings_set" "stop" "hot_reload"])))))
 
 (defn- cmd-editor-manage [ctx params]

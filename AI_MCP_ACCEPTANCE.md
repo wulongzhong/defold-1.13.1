@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1（关编辑器）** 是需求 §3.4 的另一半：同一工具名走 bob / 磁盘。P0 签字不依赖它，但用例已写在本文，下一轮按表跑。
+**P1** 已在打包编辑器（当前用户 zip）上按 ID 实跑，不再默认 SKIP。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1 未跑必须在报告里标 `SKIP`，禁止假装通过。
+P1 必须实跑；漏跑 = 失败。禁止把没跑的 P1 标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1 未跑必须在报告里标 `SKIP`，禁止假装通过。
 
 ## 5. 用例
 
-优先级：**P0** = 本轮签字必须过。**P1** = 需求已写、本轮可标 SKIP，但不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -167,7 +167,7 @@ P1 未跑必须在报告里标 `SKIP`，禁止假装通过。
 | L3-02 | P0 | §4.3、§15.1 | 读 `engine.json` | 含 `--agent-control=`；不含 `/eval` |
 | L3-03 | P0 | §9 | 再 `project_run mode=live`（不先 stop） | `NOT_ALLOWED` 或实现先停再拉、回包说明只有一个 live |
 | L3-04 | P0 | §9 | `project_stop` | `live_status.alive` 不是 true |
-| L3-05 | P1 | §3.4、§15.3 | 关编辑器后 `project_run mode=live` | 仍能 observe（本轮 P0 不跑） |
+| L3-05 | P1 | §3.4、§15.3 | 关编辑器后 `project_run mode=live` | 仍能 observe；关编辑器时的磁盘写 `source=disk` 且 `undoable:false` |
 
 L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默两个 dmengine。
 
@@ -191,7 +191,7 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L4-12 | P0 | §7.7 R2 | 两次 observe 后 `runtime_diff` | `source=runtime`；不把 `_raw.json` 的 `id: main` 当成快照 |
 | L4-13 | P0 | §7.8 | `op=list` 与 `op=summary` | list 有快照句柄；summary 有 roots / types，无整树 |
 | L4-14 | P1 | §7.4 | `inline=preview` | 可有最多 80 浅节点，且 `truncated` 字段合法 |
-| L4-15 | P1 | §7.4 | `inline=full` 超 48 KB | `INLINE_TOO_LARGE`；快照文件仍在 |
+| L4-15 | P1 | §7.4 | `runtime_observe inline=full`；再对同一份真实 record 注入超预算 padding，走 `observe_envelope` | 本工程快照 &lt; 48 KB 时允许 `status=ok`，快照文件仍在。padding 后必须 `INLINE_TOO_LARGE`，且原快照文件仍在 |
 | L4-16 | P1 | §7.8 | `snapshot=live` 的 get_node | 与文件查询分开；主环测试不得把它当默认 |
 
 ### 5.5 L5 干预
@@ -320,7 +320,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 ```text
 PASS  L4-06  get_node is goc with world_position  ...
 FAIL  L1-15  batch_execute rollback  Nested batch_execute is not allowed
-SKIP  L0-06  tools/list closed schemas  P1
+SKIP  L5-07  optional screenshot
 ```
 
 `.cache/mcp-acceptance-report.json`：
@@ -334,7 +334,8 @@ SKIP  L0-06  tools/list closed schemas  P1
     {"id": "L4-06", "priority": "P0", "passed": true, "status": "ok", "message": ""}
   ],
   "p0_failed": [],
-  "p1_skipped": ["L0-06"]
+  "p1_failed": [],
+  "p1_skipped": []
 }
 ```
 

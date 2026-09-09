@@ -2686,26 +2686,36 @@ bail:
         dmHID::HMouse mouse = dmHID::GetMouse(engine->m_HidContext, 0);
         for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
         {
-            if (g_AgentKeys[i].m_Used && g_AgentKeys[i].m_Frames > 0)
+            if (!g_AgentKeys[i].m_Used)
+            {
+                continue;
+            }
+            if (g_AgentKeys[i].m_Frames > 0)
             {
                 dmHID::SetKey(keyboard, g_AgentKeys[i].m_Key, true);
                 g_AgentKeys[i].m_Frames--;
-                if (g_AgentKeys[i].m_Frames == 0)
-                {
-                    g_AgentKeys[i].m_Used = false;
-                }
+            }
+            else
+            {
+                dmHID::SetKey(keyboard, g_AgentKeys[i].m_Key, false);
+                g_AgentKeys[i].m_Used = false;
             }
         }
         for (uint32_t i = 0; i < AGENT_MAX_HOLDS; ++i)
         {
-            if (g_AgentMouseButtons[i].m_Used && g_AgentMouseButtons[i].m_Frames > 0)
+            if (!g_AgentMouseButtons[i].m_Used)
+            {
+                continue;
+            }
+            if (g_AgentMouseButtons[i].m_Frames > 0)
             {
                 dmHID::SetMouseButton(mouse, g_AgentMouseButtons[i].m_Button, true);
                 g_AgentMouseButtons[i].m_Frames--;
-                if (g_AgentMouseButtons[i].m_Frames == 0)
-                {
-                    g_AgentMouseButtons[i].m_Used = false;
-                }
+            }
+            else
+            {
+                dmHID::SetMouseButton(mouse, g_AgentMouseButtons[i].m_Button, false);
+                g_AgentMouseButtons[i].m_Used = false;
             }
         }
         if (g_AgentHasMouse)

@@ -273,13 +273,26 @@ def remove_block_containing(text: str, needle: str) -> str:
     return "\n".join(kept).rstrip() + "\n"
 
 
-def set_scalar(text: str, key: str, value: str) -> str:
-    quoted_value = value if value.startswith('"') else f'"{value}"'
+def format_proto_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(value)
+    text = str(value)
+    if text.startswith('"'):
+        return text
+    return f'"{text}"'
+
+
+def set_scalar(text: str, key: str, value: Any) -> str:
+    formatted = format_proto_scalar(value)
     pattern = re.compile(rf'(^|\n)([ \t]*{re.escape(key)}:\s*)(?:"[^"]*"|[^\s\n]+)')
     if pattern.search(text):
-        return pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}{quoted_value}", text, count=1)
+        return pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}{formatted}", text, count=1)
     suffix = "" if text.endswith("\n") else "\n"
-    return f"{text}{suffix}{key}: {quoted_value}\n"
+    return f"{text}{suffix}{key}: {formatted}\n"
 
 
 def parse_bindings(text: str) -> List[Dict[str, str]]:
@@ -778,8 +791,24 @@ def handle_camera(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             present = f'id: "{ident}"' in text
             return ok_envelope({"path": path, "id": ident, "present": present, "source": "disk"})
         if op == "remove":
+            if collection and params.get("id"):
+                from agent_ops import disk_command
+
+                return disk_command(
+                    project,
+                    "component_manage",
+                    {
+                        "op": "remove",
+                        "collection": collection,
+                        "id": params.get("id"),
+                        "component": ident,
+                    },
+                )
             if not path:
-                return error_envelope("MISSING_PARAM", "camera_manage remove needs path")
+                return error_envelope(
+                    "MISSING_PARAM",
+                    "camera_manage remove needs a .go path, or collection and id",
+                )
             path = sanitize_proj_path(str(path))
             rewrite(project, path, remove_block_containing(read_resource(project, path), f'id: "{ident}"'))
             return ok_envelope({"path": path, "id": ident, "removed": True, "undoable": False, "source": "disk"})
