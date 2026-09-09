@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P23** 已在打包编辑器上按 ID 实跑。**P24** 是需求里已写、合同还没编号的 hierarchy / component_add / collection create 缺参。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P24** 已在打包编辑器上按 ID 实跑。**P25** 是需求里已写、合同还没编号的 manage 缺 id / property，以及 write_text 缺 text。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P24 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P25 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P24 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P23** = 已在打包编辑器上跑过。**P24** = 本轮按需求补的编号；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P24** = 已在打包编辑器上跑过。**P25** = 本轮按需求补的编号；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -183,6 +183,9 @@ P1–P24 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L1-50 | P24 | §8.1、§10 | `collection_get_hierarchy` 不传 path | `MISSING_PARAM` |
 | L1-51 | P24 | §8.2、§10 | `component_add` 有 collection 不传 id | `MISSING_PARAM` |
 | L1-52 | P24 | §8.3、§10 | `collection_manage create` 不传 path | `MISSING_PARAM` |
+| L1-53 | P25 | §8.3、§10 | `gameobject_manage set_property` 不传 id | `MISSING_PARAM` |
+| L1-54 | P25 | §8.3、§10 | `component_manage set_property` 不传 property | `MISSING_PARAM` |
+| L1-55 | P25 | §8.3、§10 | `filesystem_manage write_text` 有 path 不传 text | `MISSING_PARAM` |
 
 ### 5.2 L2 编译诊断
 
@@ -378,14 +381,14 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `collection_manage` | L1 | L1-10、L1-11、L1-12；P2：L1-27；P22：L1-46；P24：L1-52 | create / remove / get_roots / add_instance；缺 id / path 为 MISSING_PARAM |
 | `gameobject_create` | L1 | L1-02、L1-07；P23：L1-47 | hierarchy + position；缺 collection 为 MISSING_PARAM |
 | `gameobject_get_properties` | L1 | L1-02、L1-03、L1-16；P6：L1-30 | source + position / components；缺 id 为 MISSING_PARAM |
-| `gameobject_manage` | L1 | L1-03、L1-04；P1：L1-17、L1-18；P6：L1-29；P19：L1-38；P22：L1-45 | set_property 读回；find 命中；假 op 为 UNKNOWN_OP；缺 property / name 为 MISSING_PARAM |
+| `gameobject_manage` | L1 | L1-03、L1-04；P1：L1-17、L1-18；P6：L1-29；P19：L1-38；P22：L1-45；P25：L1-53 | set_property 读回；find 命中；假 op 为 UNKNOWN_OP；缺 property / name / id 为 MISSING_PARAM |
 | `component_add` | L1 | L1-09；P24：L1-51 | 有 label；缺 id 为 MISSING_PARAM |
-| `component_manage` | L1 | L1-19；P19：L1-39 | P1；缺 component 为 MISSING_PARAM |
+| `component_manage` | L1 | L1-19；P19：L1-39；P25：L1-54 | P1；缺 component / property 为 MISSING_PARAM |
 | `script_create` | L1 | L1-05；P3：L0-11、L0-12；P20：L1-41 | 文件 + init；building/observing 拒写；缺 path 为 MISSING_PARAM |
 | `script_attach` | L1 | L1-06、L1-07；P23：L1-48 | components；缺 id 为 MISSING_PARAM |
 | `script_patch` | L1 | L1-08、L2-05；P23：L1-49 | 文本变化；缺 path 为 MISSING_PARAM |
 | `script_manage` | L1 | L1-08；P1：L1-20；P20：L1-42 | read 文本；缺 path 为 MISSING_PARAM |
-| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32；P15：L1-34；P16：L1-33；P18：L1-35–L1-37 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` / 无前导 `/` 为 INVALID_PARAM；缺 query / path / dest |
+| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32；P15：L1-34；P16：L1-33；P18：L1-35–L1-37；P25：L1-55 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` / 无前导 `/` 为 INVALID_PARAM；缺 query / path / dest / text |
 | `batch_execute` | L1 | L1-15；P2：L1-28；P21：L1-44 | rolled_back；混 check 时 atomic=false；缺 commands 为 MISSING_PARAM |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
@@ -470,6 +473,7 @@ SKIP  L5-07  optional screenshot
   "p22_failed": [],
   "p23_failed": [],
   "p24_failed": [],
+  "p25_failed": [],
   "p1_skipped": []
 }
 ```

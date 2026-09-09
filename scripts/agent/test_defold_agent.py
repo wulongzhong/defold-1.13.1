@@ -1447,6 +1447,10 @@ class ToolQualityTest(unittest.TestCase):
                 "MISSING_PARAM",
                 dispatch_command(project, "filesystem_manage", {"op": "delete"}, 2)["error"]["code"],
             )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "filesystem_manage", {"op": "write_text", "path": "/main/notext.txt"}, 2)["error"]["code"],
+            )
             configure_mcp(["atlas"])
             try:
                 listed = handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, project, 2)
@@ -1778,6 +1782,13 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("MISSING_PARAM", missing_prop["error"]["code"])
+            missing_go_id = dispatch_command(
+                project,
+                "gameobject_manage",
+                {"op": "set_property", "collection": "/main/main.collection", "property": "position", "value": [1, 2, 0]},
+                2,
+            )
+            self.assertEqual("MISSING_PARAM", missing_go_id["error"]["code"])
             missing_comp = dispatch_command(
                 project,
                 "component_manage",
@@ -1785,6 +1796,13 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("MISSING_PARAM", missing_comp["error"]["code"])
+            missing_comp_prop = dispatch_command(
+                project,
+                "component_manage",
+                {"op": "set_property", "collection": "/main/main.collection", "id": "cube", "component": "label"},
+                2,
+            )
+            self.assertEqual("MISSING_PARAM", missing_comp_prop["error"]["code"])
             escaped = dispatch_command(
                 project,
                 "filesystem_manage",

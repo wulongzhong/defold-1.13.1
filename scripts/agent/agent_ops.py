@@ -1052,7 +1052,11 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 return ok_envelope({"path": sanitize_proj_path(path), "text": _read_text(project, path), "source": "disk"})
             if op == "write_text":
                 path = params.get("path")
-                _write_text(project, path, params.get("text", ""), overwrite=True)
+                if not path:
+                    return error_envelope("MISSING_PARAM", "write_text needs path")
+                if "text" not in params or params.get("text") is None:
+                    return error_envelope("MISSING_PARAM", "write_text needs text")
+                _write_text(project, path, params.get("text"), overwrite=True)
                 return ok_envelope({"path": sanitize_proj_path(path), "written": True, "undoable": False, "source": "disk"})
             if op == "mkdir":
                 path = params.get("path")
