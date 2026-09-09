@@ -1,6 +1,6 @@
 # Copyright 2020-2026 The Defold Foundation
 # Licensed under the Defold License version 1.0 (the "License")
-"""Case IDs from AI_MCP_ACCEPTANCE.md. The runner must execute every P0 through P33 id."""
+"""Case IDs from AI_MCP_ACCEPTANCE.md. The runner must execute every P0 through P34 id."""
 
 from __future__ import annotations
 
@@ -343,6 +343,12 @@ P33_IDS = (
     "L6-42",
     "L6-43",
     "L6-44",
+)
+
+P34_IDS = (
+    "L6-45",
+    "L6-46",
+    "L6-47",
 )
 
 SPEC_PATH = "AI_MCP_ACCEPTANCE.md"
