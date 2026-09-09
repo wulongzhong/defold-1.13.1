@@ -577,9 +577,12 @@
        :kind "collection_instance"
        :node_id instance
        :resource (source-proj-path instance)
+       :collection (source-proj-path instance)
        :source "editor"
        :components []
-       :properties (property-snapshot instance)}
+       :properties {"position" {:value (json-value (g/node-value instance :position))}
+                    "rotation" {:value (json-value (g/node-value instance :rotation))}
+                    "scale" {:value (json-value (g/node-value instance :scale))}}}
       (let [go-node (resolve-go-node instance)
             component-id (optional-string params :component)
             target (if component-id
@@ -1301,9 +1304,7 @@
 
 (defn- cmd-camera-manage [ctx params]
   (let [op (require-string params :op)
-        component (or (optional-string params :component)
-                      (optional-string params :id)
-                      "camera")]
+        component (or (optional-string params :component) "camera")]
     (case op
       "add" (cmd-component-add ctx (assoc params :type "camera"))
       "get" (cmd-gameobject-get-properties ctx (assoc params :component component))

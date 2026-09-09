@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -784,6 +785,31 @@ def handle_camera(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             rewrite(project, path, text.rstrip() + CAMERA_BLOCK.format(id=ident))
             return ok_envelope({"path": path, "id": ident, "undoable": False, "source": "disk"})
         if op == "get":
+            if collection and params.get("id"):
+                from agent_ops import disk_command
+
+                props = disk_command(
+                    project,
+                    "gameobject_get_properties",
+                    {
+                        "collection": collection,
+                        "id": params.get("id"),
+                        "component": ident,
+                    },
+                )
+                if props.get("status") != "ok":
+                    return props
+                data = props.get("data") or {}
+                blob = json.dumps(data).lower()
+                present = ident in blob or "camera" in blob
+                return ok_envelope(
+                    {
+                        "id": ident,
+                        "present": present,
+                        "source": data.get("source") or "disk",
+                        "properties": data.get("properties") or {},
+                    }
+                )
             if not path:
                 return error_envelope("MISSING_PARAM", "camera_manage get needs path")
             path = sanitize_proj_path(str(path))

@@ -1376,6 +1376,36 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", nested["status"], nested)
             self.assertEqual([256.0, 165.0, 1.0], nested["data"]["properties"]["position"])
 
+    def test_camera_get_accepts_collection_and_id(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "hero", "position": [0, 0, 0]},
+                2,
+            )
+            added = dispatch_command(
+                project,
+                "camera_manage",
+                {"op": "add", "collection": "/main/main.collection", "id": "hero"},
+                2,
+            )
+            self.assertEqual("ok", added["status"], added)
+            result = dispatch_command(
+                project,
+                "camera_manage",
+                {"op": "get", "collection": "/main/main.collection", "id": "hero"},
+                2,
+            )
+            self.assertEqual("ok", result["status"], result)
+            self.assertTrue(result["data"].get("present"))
+
     def test_authoring_position_omitted_z_and_missing_block(self):
         from agent_ops import parse_gameobject_properties
 

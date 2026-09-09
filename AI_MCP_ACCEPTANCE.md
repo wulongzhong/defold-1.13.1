@@ -203,7 +203,7 @@ A-25 领域文件（均在 `/mcp/`）：`sprites.atlas`、`tiles.tilesource`、`
 
 ### 5.6 同一 live 随机长跑（T）— 仍不 stop、不重开引擎
 
-T 段接在 M 之后、N 之前。禁止 `project_stop` / 再 `project_run` / `editor_manage quit` / 改官方 `player.script` / `filesystem_manage read_text` 快照 JSON。关编辑器只在 X。一步失败立刻停，报告写清 `soak_seed`、步号、tool、回包。修产品，不放宽本表断言。
+T 段接在 M 之后、N 之前。禁止 `project_stop` / 再 `project_run` / `editor_manage quit` / 改官方 `player.script` / `filesystem_manage read_text` 快照 JSON。关编辑器只在 X。一步失败**记录后继续跑完**本场（T/N/X），报告写清 `soak_seed`、全部失败步的步号、tool、回包。整场结束后再一次性修产品，不放宽本表断言。
 
 随机池只打读 + `/mcp/` 或 `mcp_marker` 安全写 + 有限干预 + 已有稳定 `error.code` 负例。权重偏读。`project_stop` / `project_run` / `quit` 只允许出现在 R/X 已有步骤；T 池用读和安全写代替这三者及其破坏性 op。
 
