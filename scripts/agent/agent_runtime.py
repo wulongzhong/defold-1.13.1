@@ -38,6 +38,7 @@ PREVIEW_LIMIT = 80
 LOG_LINE_LIMIT = 40
 HIERARCHY_DEFAULT_LIMIT = 200
 FIND_DEFAULT_LIMIT = 50
+TRUNCATE_HINT = "Result was truncated. Narrow id/limit or query the snapshot file."
 
 RE_SERVICE_PORT = re.compile(r"Engine service started on port (\d+)")
 RE_SNAPSHOT_ID_FILE = re.compile(r"^\d{8}T\d{6}Z-.+\.json$")
@@ -636,17 +637,18 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         if oversized:
             return oversized
         tree, truncated, used = subtree(node, depth, limit)
-        return ok_envelope(
-            {
-                "node": tree,
-                "truncated": truncated,
-                "count": used,
-                "offset": offset,
-                "limit": limit,
-                "source": "runtime",
-                "snapshot": record.get("id"),
-            }
-        )
+        payload = {
+            "node": tree,
+            "truncated": truncated,
+            "count": used,
+            "offset": offset,
+            "limit": limit,
+            "source": "runtime",
+            "snapshot": record.get("id"),
+        }
+        if truncated:
+            payload["hint"] = TRUNCATE_HINT
+        return ok_envelope(payload)
 
     if op == "find":
         offset = int(params.get("offset") or 0)
@@ -670,6 +672,8 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             "source": "runtime",
             "snapshot": record.get("id"),
         }
+        if payload["truncated"]:
+            payload["hint"] = TRUNCATE_HINT
         oversized = reject_if_inline_too_large(params, payload, total)
         if oversized:
             return oversized
