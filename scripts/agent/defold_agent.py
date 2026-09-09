@@ -336,6 +336,8 @@ def _http_json(
         except Exception:
             parsed = raw.decode("utf-8", errors="replace")
         return error.code, parsed, dict(error.headers)
+    except (TimeoutError, ConnectionResetError, ConnectionAbortedError, OSError) as error:
+        raise RuntimeError(f"editor http failed: {type(error).__name__}: {error}") from error
 
 
 def _http_bytes(url: str, token: str, dest: Path, timeout: float = 60.0) -> int:
@@ -355,7 +357,10 @@ def editor_check(project: Path, timeout: float) -> Optional[Dict[str, Any]]:
     if not endpoint:
         return None
     url, token = endpoint
-    status, body, _ = _http_json(f"{url}/command/check", token, method="POST", timeout=timeout)
+    try:
+        status, body, _ = _http_json(f"{url}/command/check", token, method="POST", timeout=timeout)
+    except RuntimeError:
+        return None
     if status == 404:
         return None
     if isinstance(body, dict):

@@ -136,3 +136,6 @@ P0_IDS = (
 )
 
 SPEC_PATH = "AI_MCP_ACCEPTANCE.md"
+
+# Each A/C/R/N command case must re-assert this many times after the first write.
+CASE_REPEATS = 8

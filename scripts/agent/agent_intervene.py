@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agent_ops import error_envelope, ok_envelope
-from agent_runtime import DUMP_WAIT_SEC, control_dir, live_status
+from agent_runtime import DUMP_WAIT_SEC, control_dir, live_status, retry_file_op
 
 
 MAX_INPUT_EVENTS = 16
@@ -267,19 +267,6 @@ def parse_debug_ready(text: str) -> Tuple[bool, str, Dict[str, str], Dict[str, A
     return ok, extra, fields, stack
 
 
-def retry_file_op(op, attempts: int = 8):
-    last: Optional[PermissionError] = None
-    for index in range(attempts):
-        try:
-            return op()
-        except PermissionError as exc:
-            last = exc
-            time.sleep(0.05 * (index + 1))
-    if last is not None:
-        raise last
-    raise PermissionError("file is locked")
-
-
 def request_live_control(project: Path, kind: str, body: str, timeout: float = DUMP_WAIT_SEC) -> str:
     directory = control_dir(project)
     directory.mkdir(parents=True, exist_ok=True)
@@ -411,6 +398,19 @@ def game_eval(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         return blocked
     try:
         text = request_live_control(project, "eval", source, float(params.get("timeout") or DUMP_WAIT_SEC))
+    except PermissionError:
+        try:
+            text = request_live_control(project, "eval", source, float(params.get("timeout") or DUMP_WAIT_SEC))
+        except PermissionError:
+            return error_envelope(
+                "HANDLER_ERROR",
+                "Live engine eval.ready is locked. Retry game_eval.",
+            )
+        except TimeoutError:
+            return error_envelope(
+                "AGENT_CONTROL_TIMEOUT",
+                "Live engine did not write eval.ready. Rebuild dmengine with --agent-control.",
+            )
     except TimeoutError:
         return error_envelope(
             "AGENT_CONTROL_TIMEOUT",

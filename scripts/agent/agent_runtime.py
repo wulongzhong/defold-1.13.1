@@ -255,10 +255,13 @@ def prune_snapshots(project: Path) -> None:
         reverse=True,
     )
     for stale in files[RETAIN:]:
-        stale.unlink(missing_ok=True)
-        png = stale.with_suffix(".png")
-        if png.is_file():
-            png.unlink(missing_ok=True)
+        try:
+            retry_file_op(lambda: stale.unlink(missing_ok=True))
+            png = stale.with_suffix(".png")
+            if png.is_file():
+                retry_file_op(lambda: png.unlink(missing_ok=True))
+        except PermissionError:
+            continue
 
 
 def write_engine_json(project: Path, log: str) -> Optional[Dict[str, Any]]:
@@ -973,6 +976,19 @@ def write_engine_record(project: Path, payload: Dict[str, Any]) -> Dict[str, Any
     return payload
 
 
+def retry_file_op(op, attempts: int = 8):
+    last = None
+    for index in range(attempts):
+        try:
+            return op()
+        except PermissionError as exc:
+            last = exc
+            time.sleep(0.05 * (index + 1))
+    if last is not None:
+        raise last
+    raise PermissionError("file is locked")
+
+
 def request_live_file(project: Path, kind: str, dest: Path, timeout: float = DUMP_WAIT_SEC) -> Path:
     directory = control_dir(project)
     directory.mkdir(parents=True, exist_ok=True)
@@ -980,19 +996,19 @@ def request_live_file(project: Path, kind: str, dest: Path, timeout: float = DUM
     ready = directory / f"{kind}.ready"
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
-        dest.unlink()
+        retry_file_op(lambda: dest.unlink(missing_ok=True))
     if ready.exists():
-        ready.unlink()
+        retry_file_op(lambda: ready.unlink(missing_ok=True))
     tmp = directory / f"{kind}.request.tmp"
     tmp.write_text(str(dest), encoding="utf-8")
     tmp.replace(request)
     deadline = time.time() + timeout
     while time.time() < deadline:
         if ready.is_file():
-            text = ready.read_text(encoding="utf-8", errors="replace")
+            text = retry_file_op(lambda: ready.read_text(encoding="utf-8", errors="replace"))
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             status = lines[0] if lines else ""
-            ready.unlink(missing_ok=True)
+            retry_file_op(lambda: ready.unlink(missing_ok=True))
             if status != "OK" or not dest.is_file():
                 raise RuntimeError(f"Live {kind} failed")
             return dest
@@ -1019,6 +1035,19 @@ def observe_from_live(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     raw = snapshots_dir(project) / "_raw.json"
     try:
         request_live_dump(project, raw, float(params.get("timeout") or DUMP_WAIT_SEC))
+    except PermissionError:
+        try:
+            request_live_dump(project, raw, float(params.get("timeout") or DUMP_WAIT_SEC))
+        except PermissionError:
+            return error_envelope(
+                "HANDLER_ERROR",
+                "Live engine dump.ready is locked. Retry runtime_observe.",
+            )
+        except TimeoutError:
+            return error_envelope(
+                "RUNTIME_DUMP_MISSING",
+                "Live engine did not write dump.ready. Rebuild dmengine with --agent-control.",
+            )
     except TimeoutError:
         return error_envelope(
             "RUNTIME_DUMP_MISSING",
@@ -1039,16 +1068,22 @@ def observe_from_live(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             request_live_screenshot(project, shot, float(params.get("timeout") or DUMP_WAIT_SEC))
         except (TimeoutError, RuntimeError):
             shot = None
-    record = wrap_engine_dump(
-        project,
-        raw,
-        mode="live",
-        frame=None,
-        target={"pid": status.get("pid"), "mode": "live"},
-        issues=[],
-        screenshot=shot if shot and shot.is_file() else None,
-        dest=snapshot_dest_path(project, params),
-    )
+    try:
+        record = wrap_engine_dump(
+            project,
+            raw,
+            mode="live",
+            frame=None,
+            target={"pid": status.get("pid"), "mode": "live"},
+            issues=[],
+            screenshot=shot if shot and shot.is_file() else None,
+            dest=snapshot_dest_path(project, params),
+        )
+    except PermissionError:
+        return error_envelope(
+            "HANDLER_ERROR",
+            "Live snapshot file is locked. Retry runtime_observe.",
+        )
     log_lines = read_engine_log_lines(project)
     return observe_envelope(
         {**record, "_path": str(snapshots_dir(project) / f"{record['id']}.json")},
@@ -1376,6 +1411,7 @@ def runtime_screenshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
         {
             "source": "runtime",
             "screenshot": str(dest),
+            "path": str(dest),
             "bytes": dest.stat().st_size,
             "target": {"pid": status.get("pid"), "alive": True},
         },

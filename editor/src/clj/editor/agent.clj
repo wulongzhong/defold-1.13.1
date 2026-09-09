@@ -110,7 +110,16 @@
    "scene_save" "collection_save"})
 
 (def ^:private read-ops
-  #{"exists" "find" "get" "get_roots" "list" "mcp_config" "read" "read_text" "search" "selection_get" "settings_get" "state" "stop"})
+  #{"exists" "find" "get" "get_node" "get_path" "get_roots" "get_subtree" "get_tile"
+    "list" "list_ids" "mcp_config" "read" "read_text" "search" "selection_get"
+    "settings_get" "state" "status" "stop"})
+
+(def ^:private write-ops
+  #{"add" "add_animation" "add_box" "add_emitter" "add_font" "add_gamepad" "add_image"
+    "add_key" "add_layer" "add_mouse" "add_text" "add_texture" "add_touch" "copy"
+    "create" "delete" "mkdir" "remove" "remove_instance" "rename" "set" "set_font"
+    "set_image" "set_node" "set_program" "set_property" "set_script" "set_sound"
+    "set_tile" "set_tile_set" "settings_set" "write_text"})
 
 (def ^:private always-read-commands
   #{"api_manage"
@@ -163,6 +172,9 @@
     (assoc params :op "set_property")
     params))
 
+(defn- manage-command? [command]
+  (string/ends-with? (or command "") "_manage"))
+
 (defn- authoring-write? [command params]
   (let [op (or (get params :op) (get params "op"))]
     (cond
@@ -170,7 +182,12 @@
       false
 
       (string? op)
-      (not (contains? read-ops op))
+      (if (manage-command? command)
+        (contains? write-ops op)
+        (not (contains? read-ops op)))
+
+      (manage-command? command)
+      false
 
       :else
       (not= "batch_execute" command))))

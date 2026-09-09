@@ -49,17 +49,58 @@ COMMAND_ALIASES = {
 READ_OPS = {
     "find",
     "get",
+    "get_node",
+    "get_path",
     "get_roots",
+    "get_subtree",
+    "get_tile",
     "exists",
     "list",
+    "list_ids",
     "read",
     "read_text",
     "search",
     "selection_get",
     "settings_get",
     "state",
+    "status",
     "stop",
     "mcp_config",
+}
+
+WRITE_OPS = {
+    "add",
+    "add_animation",
+    "add_box",
+    "add_emitter",
+    "add_font",
+    "add_gamepad",
+    "add_image",
+    "add_key",
+    "add_layer",
+    "add_mouse",
+    "add_touch",
+    "add_text",
+    "add_texture",
+    "copy",
+    "create",
+    "delete",
+    "mkdir",
+    "remove",
+    "remove_instance",
+    "rename",
+    "set",
+    "set_font",
+    "set_image",
+    "set_node",
+    "set_program",
+    "set_property",
+    "set_script",
+    "set_sound",
+    "set_tile",
+    "set_tile_set",
+    "settings_set",
+    "write_text",
 }
 
 ALWAYS_READ_COMMANDS = {
@@ -107,5 +148,11 @@ def authoring_write(command: str, params: Optional[Dict[str, Any]] = None) -> bo
         return False
     op = params.get("op")
     if isinstance(op, str):
+        if op in READ_OPS:
+            return False
+        if command.endswith("_manage"):
+            return op in WRITE_OPS
         return op not in READ_OPS
+    if command.endswith("_manage"):
+        return False
     return command not in {"batch_execute"}

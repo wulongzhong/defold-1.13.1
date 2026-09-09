@@ -433,15 +433,19 @@ class RuntimeSnapshotTest(unittest.TestCase):
     def test_acceptance_t_ids_are_in_spec(self):
         from pathlib import Path
 
-        from acceptance_cases import P0_IDS, SPEC_PATH, T_IDS
+        from acceptance_cases import A_IDS, C_IDS, CASE_REPEATS, N_IDS, P0_IDS, R_IDS, SPEC_PATH, T_IDS
 
         spec = Path(__file__).resolve().parents[2] / SPEC_PATH
         text = spec.read_text(encoding="utf-8")
-        for cid in T_IDS:
+        for cid in (*A_IDS, *C_IDS, *R_IDS, *N_IDS, *T_IDS):
             self.assertIn(cid, text)
         self.assertIn("T-01", P0_IDS)
         self.assertIn("t_failed", text)
         self.assertIn("soak_seed", text)
+        self.assertGreaterEqual(CASE_REPEATS, 8)
+        self.assertIn("CASE_REPEATS", text)
+        self.assertIn(f"{CASE_REPEATS} 次", text)
+        self.assertIn("A/C/R/N 每条", text)
 
     def test_get_path(self):
         import tempfile
@@ -1503,6 +1507,26 @@ class ToolQualityTest(unittest.TestCase):
             self.assertTrue(written.is_file())
             self.assertEqual(b"png", written.read_bytes())
 
+    def test_runtime_screenshot_envelope_has_path(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from agent_runtime import runtime_screenshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            dest = project / "shot.png"
+            dest.write_bytes(b"\x89PNG\r\n\x1a\nxxxx")
+            with patch("agent_runtime.live_status", return_value={"alive": True, "pid": 1}), patch(
+                "agent_runtime.request_live_screenshot",
+                return_value=dest,
+            ):
+                result = runtime_screenshot(project, {"dest": str(dest)})
+            self.assertEqual("ok", result["status"])
+            self.assertEqual(str(dest), result["data"]["path"])
+            self.assertEqual(str(dest), result["data"]["screenshot"])
+
     def test_aliases_and_disk_collection_ops(self):
         import tempfile
         from pathlib import Path
@@ -1718,6 +1742,32 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("EDITOR_NOT_READY", result["error"]["code"])
             self.assertEqual("building", result["error"]["data"]["sub_code"])
             self.assertFalse((project / "main" / "a.script").exists())
+            dispatch_command(
+                project,
+                "tilemap_manage",
+                {"op": "create", "path": "/main/level.tilemap", "tile_set": "/main/tiles.tilesource"},
+                2,
+            )
+            dispatch_command(project, "tilemap_manage", {"op": "add_layer", "path": "/main/level.tilemap", "id": "layer1"}, 2)
+            dispatch_command(
+                project,
+                "tilemap_manage",
+                {"op": "set_tile", "path": "/main/level.tilemap", "layer": "layer1", "x": 15, "y": 6, "tile": 16},
+                2,
+            )
+            with BuildingLock(project):
+                tile = dispatch_command(
+                    project,
+                    "tilemap_manage",
+                    {"op": "get_tile", "path": "/main/level.tilemap", "layer": "layer1", "x": 15, "y": 6},
+                    2,
+                )
+                missing = dispatch_command(project, "atlas_manage", {}, 2)
+                explode = dispatch_command(project, "filesystem_manage", {"op": "explode", "path": "/main/a.script"}, 2)
+            self.assertEqual("ok", tile["status"], tile)
+            self.assertEqual(16, tile["data"]["tile"])
+            self.assertEqual("MISSING_PARAM", missing["error"]["code"])
+            self.assertEqual("UNKNOWN_OP", explode["error"]["code"])
             created = dispatch_command(project, "script_create", {"path": "/main/a.script"}, 2)
             self.assertEqual("ok", created["status"])
 
