@@ -212,7 +212,7 @@ T 段接在 M 之后、N 之前。禁止 `project_stop` / 再 `project_run` / `e
 | ID | P | 需求 | 步骤 | 断言 |
 | --- | --- | --- | --- | --- |
 | T-01 | P0 | §3.2 | `random.Random(soak_seed)` 在同一 live 上随机连打 | 墙钟 ≥ 30 分钟且 ≤ 60 分钟。`soak_seed` 写入报告。随机步数 ≥ 80。`scripts/agent/agent_mcp.py` 的每个 tool 名至少被抽到 1 次（`project_stop` / `project_run` / `quit` 除外，它们只在 R/X） |
-| T-02 | — | §3.2、§7.8 | 每 20 步做不变量，并再跑一遍 A-01 / A-09 / A-10 / A-08 / R-07 / R-10 读回。A/C/R/N 全表在各阶段结束后再连续读回 `CASE_REPEATS` 轮 | 同一 live pid；id 快照文件 ≤ 8；observe / snapshot_query 信封无 `scene_graph` 且 < 48 KB；`/game/level.tilemap` `(15,6)==16`；`player/player` 世界 x 有限（`abs < 10000`）；title 仍是 `PixelLinePlatformer`；A/C/R/N 每条本场至少各成功 8 次 |
+| T-02 | — | §3.2、§7.8 | 每 20 步做不变量，并再跑一遍 A-01 / A-09 / A-10 / A-08 / R-07 / R-10 读回。A/C/R/N 全表在各阶段结束后再连续读回 `CASE_REPEATS` 轮 | 同一 live pid；id 快照文件 ≤ 8；observe / snapshot_query 信封无 `scene_graph` 且 < 48 KB；`/game/level.tilemap` `(15,6)==16`；`player/player` 世界 x 有限（`abs < 10000`）；title 仍是 `PixelLinePlatformer`；A/C/R/N 每条本场至少各成功 8 次（N 在 N 段结束后计入） |
 | T-03 | — | §3.2 | 读 live dmengine WorkingSet：T 开始 vs T 结束 | 结束值 ≤ `max(T开始*3, T开始+256MB)`。读不到 WorkingSet = 失败 |
 | T-04 | — | §3.2、§3.3 | T 结束后立刻 `get_node` 玩家 + `get_tile` (15,6) + `live_status` | 有玩家 `world_position`；tile == 16；live 仍 alive。然后才进 N |
 

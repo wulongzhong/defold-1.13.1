@@ -447,6 +447,11 @@
             {:path (resource/proj-path resource)
              :saved true}))))))
 
+(defn- try-save-resource-node! [node-id]
+  (try
+    (save-resource-node! node-id)
+    (catch Exception _ nil)))
+
 (defn- template-content [workspace ext name]
   (let [resource-type (workspace/get-resource-type workspace ext)
         template (when resource-type
@@ -790,6 +795,7 @@
                           (if-not resource-type
                             (fail! "INVALID_PARAM" (str "Unknown component type: " type-name) "Use script, sprite, model, camera, collisionobject, label, sound, particlefx.")
                             (game-object/add-embedded-component! go-node resource-type select-fn))))))]
+    (try-save-resource-node! collection-node)
     {:id (g/node-value instance :id)
      :component (g/node-value component :id)
      :node_id component

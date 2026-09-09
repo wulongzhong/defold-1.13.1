@@ -1442,6 +1442,135 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", result["status"], result)
             self.assertTrue(result["data"].get("present"))
 
+    def test_label_survives_script_attach_and_camera_add(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            (project / "main" / "note.script").write_text("function init(self)\nend\n", encoding="utf-8")
+            created = dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertEqual("ok", created["status"], created)
+            labeled = dispatch_command(
+                project,
+                "component_add",
+                {"collection": "/main/main.collection", "id": "cube", "type": "label"},
+                2,
+            )
+            self.assertEqual("ok", labeled["status"], labeled)
+            attached = dispatch_command(
+                project,
+                "script_attach",
+                {"collection": "/main/main.collection", "id": "cube", "path": "/main/note.script"},
+                2,
+            )
+            self.assertEqual("ok", attached["status"], attached)
+            camera = dispatch_command(
+                project,
+                "camera_manage",
+                {"op": "add", "collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            self.assertEqual("ok", camera["status"], camera)
+            props = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            blob = json.dumps(props.get("data") or {}).lower()
+            self.assertIn("label", blob, props)
+            self.assertIn("note.script", blob, props)
+            self.assertIn("camera", blob, props)
+            disk = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertTrue('id: "label"' in disk or 'id: \\"label\\"' in disk, disk)
+            self.assertTrue('type: "label"' in disk or 'type: \\"label\\"' in disk, disk)
+            self.assertIn("note.script", disk)
+            self.assertIn("camera", disk)
+
+    def test_get_properties_merges_disk_label_when_editor_omits_it(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text('name: "main"\n', encoding="utf-8")
+            dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/main/main.collection", "id": "cube"},
+                2,
+            )
+            dispatch_command(
+                project,
+                "component_add",
+                {"collection": "/main/main.collection", "id": "cube", "type": "label"},
+                2,
+            )
+            editor_ok = {
+                "status": "ok",
+                "data": {
+                    "id": "cube",
+                    "kind": "embedded",
+                    "source": "editor",
+                    "components": [{"id": "note", "path": "/main/note.script"}],
+                    "properties": {"position": [0.0, 0.0, 0.0]},
+                },
+            }
+            with patch("agent_ops.intercept_existing_http", return_value=None), patch(
+                "agent_ops.editor_command",
+                return_value=editor_ok,
+            ), patch("agent_ops.read_editor_endpoint", return_value=("http://127.0.0.1:1", "token")):
+                props = dispatch_command(
+                    project,
+                    "gameobject_get_properties",
+                    {"collection": "/main/main.collection", "id": "cube"},
+                    2,
+                )
+            blob = json.dumps(props.get("data") or {}).lower()
+            self.assertEqual("ok", props["status"], props)
+            self.assertIn("label", blob, props)
+            self.assertIn("note", blob, props)
+
+    def test_component_add_persists_label_when_editor_skips_disk(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "main").mkdir()
+            (project / "main" / "main.collection").write_text(
+                'name: "main"\nembedded_instances {\n  id: "cube"\n  data: ""\n}\n',
+                encoding="utf-8",
+            )
+            editor_ok = {"status": "ok", "data": {"id": "cube", "component": "label", "source": "editor"}}
+            with patch("agent_ops.intercept_existing_http", return_value=None), patch(
+                "agent_ops.editor_command",
+                return_value=editor_ok,
+            ), patch("agent_ops.read_editor_endpoint", return_value=("http://127.0.0.1:1", "token")):
+                added = dispatch_command(
+                    project,
+                    "component_add",
+                    {"collection": "/main/main.collection", "id": "cube", "type": "label"},
+                    2,
+                )
+            self.assertEqual("ok", added["status"], added)
+            disk = (project / "main" / "main.collection").read_text(encoding="utf-8")
+            self.assertTrue('id: "label"' in disk or 'id: \\"label\\"' in disk, disk)
+            self.assertTrue('type: "label"' in disk or 'type: \\"label\\"' in disk, disk)
+
     def test_authoring_position_omitted_z_and_missing_block(self):
         from agent_ops import parse_gameobject_properties
 

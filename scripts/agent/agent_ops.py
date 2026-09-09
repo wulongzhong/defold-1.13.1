@@ -218,8 +218,11 @@ def patch_text(text: str, old_text: str, new_text: str) -> str:
 
 def list_component_ids(go_text: str) -> List[Dict[str, str]]:
     items: List[Dict[str, str]] = []
-    for kind in ("embedded_components", "components"):
-        for match in re.finditer(rf"{kind}\s*\{{", go_text):
+    for kind, pattern in (
+        ("embedded_components", r"embedded_components\s*\{"),
+        ("components", r"(?<![_\w])components\s*\{"),
+    ):
+        for match in re.finditer(pattern, go_text):
             open_at = go_text.find("{", match.start())
             close_at = match_brace(go_text, open_at) if open_at >= 0 else None
             if close_at is None:
@@ -2198,6 +2201,88 @@ def persist_gameobject_create(project: Path, params: Dict[str, Any], timeout: fl
     return disk
 
 
+def component_add_ident(params: Dict[str, Any]) -> str:
+    ident = params.get("component") or params.get("component_id")
+    path = params.get("path")
+    if path and str(path).endswith(".script") and (not params.get("type") or params.get("type") == "script"):
+        return str(ident or Path(str(path)).stem)
+    return str(ident or params.get("type") or params.get("component_type") or "component")
+
+
+def collection_disk_has_component(project: Path, collection: str, go_id: str, component_id: str) -> bool:
+    needle = str(component_id)
+    if not needle:
+        return False
+    try:
+        parsed = parse_gameobject_properties(
+            _read_text(project, collection),
+            sanitize_proj_path(collection),
+            str(go_id),
+            project,
+        )
+    except (FileNotFoundError, OSError, ValueError):
+        return False
+    if not parsed:
+        return False
+    blob = json.dumps(parsed).lower()
+    if needle.lower() in blob:
+        return True
+    for item in parsed.get("components") or []:
+        if str(item.get("id") or "") == needle or str(item.get("type") or "") == needle:
+            return True
+    return False
+
+
+def persist_component_add(project: Path, command: str, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    params = dict(params or {})
+    if command == "script_attach":
+        params = {**params, "type": "script"}
+        command = "component_add"
+    collection = params.get("collection")
+    go_id = str(params.get("id") or "")
+    ident = component_add_ident(params)
+    editor = editor_command(project, command, params, timeout) if read_editor_endpoint(project) else None
+    if editor is not None and editor.get("status") == "ok":
+        if collection and go_id:
+            editor_command(project, "collection_save", {"path": collection, "collection": collection}, timeout)
+            if collection_disk_has_component(project, str(collection), go_id, ident):
+                return editor
+            disk = disk_command(project, "component_add", params)
+            if disk.get("status") != "ok":
+                return editor
+        return editor
+    disk = disk_command(project, "component_add", params)
+    if disk.get("status") == "ok" and collection:
+        refresh_editor_collection(project, str(collection), timeout)
+        if isinstance(disk.get("data"), dict) and read_editor_endpoint(project) is not None:
+            disk["data"]["source"] = "editor"
+    return disk
+
+
+def merge_get_properties(editor: Dict[str, Any], disk: Dict[str, Any]) -> Dict[str, Any]:
+    if editor.get("status") != "ok":
+        return disk if disk.get("status") == "ok" else editor
+    if disk.get("status") != "ok":
+        return editor
+    edata = editor.get("data")
+    ddata = disk.get("data")
+    if not isinstance(edata, dict) or not isinstance(ddata, dict):
+        return editor
+    if edata.get("kind") == "collection_instance" or ddata.get("kind") == "collection_instance":
+        return editor
+    merged: Dict[str, Any] = {}
+    for item in edata.get("components") or []:
+        ident = item.get("id") if isinstance(item, dict) else None
+        if ident:
+            merged[str(ident)] = item
+    for item in ddata.get("components") or []:
+        ident = item.get("id") if isinstance(item, dict) else None
+        if ident and str(ident) not in merged:
+            merged[str(ident)] = item
+    edata["components"] = list(merged.values())
+    return editor
+
+
 def dispatch_command(
     project: Path,
     command: str,
@@ -2248,6 +2333,17 @@ def dispatch_command(
         return overlay_readiness(project, activate_session(project, params))
     if command == "gameobject_create":
         return overlay_readiness(project, persist_gameobject_create(project, params, timeout))
+    if command in {"component_add", "script_attach"}:
+        return overlay_readiness(project, persist_component_add(project, command, params, timeout))
+    if (
+        command == "camera_manage"
+        and (params or {}).get("op") == "add"
+        and (params or {}).get("collection")
+        and (params or {}).get("id")
+    ):
+        add_params = dict(params)
+        add_params["type"] = add_params.get("type") or "camera"
+        return overlay_readiness(project, persist_component_add(project, "component_add", add_params, timeout))
     if command == "component_manage" and (params or {}).get("op") == "set_property":
         result = disk_command(project, command, params)
         collection = (params or {}).get("collection") or (params or {}).get("path")
@@ -2296,13 +2392,9 @@ def dispatch_command(
         result = intercepted
     else:
         editor = editor_command(project, command, params, timeout)
-        if (
-            editor is not None
-            and command == "gameobject_get_properties"
-            and editor.get("status") == "error"
-        ):
+        if command == "gameobject_get_properties":
             disk = disk_command(project, command, params)
-            result = disk if disk.get("status") == "ok" else editor
+            result = merge_get_properties(editor, disk) if editor is not None else disk
         else:
             result = editor if editor is not None else disk_command(project, command, params)
     if command in {"editor_state", "editor_manage"} and result.get("status") == "ok" and isinstance(result.get("data"), dict):
