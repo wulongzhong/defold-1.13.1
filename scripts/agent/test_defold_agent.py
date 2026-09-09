@@ -1027,6 +1027,10 @@ class ToolQualityTest(unittest.TestCase):
             self.assertIn("user_path", result["data"]["ready"])
             self.assertFalse(result["data"]["java_required"])
             self.assertEqual("stdio", result["data"]["mcp"]["transport"])
+            bad_timeout = dispatch_command(project, "project_doctor", {"tool_timeout_sec": "explode"}, 2)
+            self.assertEqual("INVALID_PARAM", bad_timeout["error"]["code"])
+            zero = dispatch_command(project, "project_doctor", {"tool_timeout_sec": 0}, 2)
+            self.assertEqual("INVALID_PARAM", zero["error"]["code"])
             self.assertIsNone(result["data"]["mcp"]["url"])
             self.assertGreater(result["data"]["mcp"]["tools"], 20)
             self.assertLess(result["data"]["mcp"]["tools"], 100)
@@ -1888,6 +1892,8 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", snippet["status"])
             self.assertIn("defold-agent", snippet["data"]["text"])
             self.assertFalse(snippet["data"]["http"])
+            codex = dispatch_command(project, "editor_manage", {"op": "mcp_config", "format": "codex"}, 1)
+            self.assertIn("tool_timeout_sec", codex["data"]["text"])
 
     def test_gui_set_and_get_node(self):
         import tempfile

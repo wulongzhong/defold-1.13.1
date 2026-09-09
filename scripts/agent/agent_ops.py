@@ -83,6 +83,19 @@ def sanitize_proj_path(path: str) -> str:
     return "/" + "/".join(parts)
 
 
+def apply_tool_timeout(params: Optional[Dict[str, Any]], timeout: float) -> Tuple[float, Optional[Dict[str, Any]]]:
+    raw = (params or {}).get("tool_timeout_sec")
+    if raw is None:
+        return timeout, None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return timeout, error_envelope("INVALID_PARAM", "tool_timeout_sec must be a positive number")
+    if seconds <= 0:
+        return timeout, error_envelope("INVALID_PARAM", "tool_timeout_sec must be a positive number")
+    return min(timeout, seconds), None
+
+
 def reject_escaped_project_path(params: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     for key in ("path", "dest", "collection"):
         raw = (params or {}).get(key)
@@ -2126,6 +2139,9 @@ def dispatch_command(
     timeout: float,
 ) -> Dict[str, Any]:
     command, params = apply_alias(command, params or {})
+    timeout, blocked = apply_tool_timeout(params, timeout)
+    if blocked is not None:
+        return blocked
     blocked = reject_escaped_project_path(params)
     if blocked is not None:
         return blocked

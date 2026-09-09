@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P16** 已在打包编辑器上按 ID 实跑。P16 覆盖工程路径必须以 `/` 开头。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P17** 已在打包编辑器上按 ID 实跑。P17 覆盖 `tool_timeout_sec` 校验与 Codex 配置读回。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P16 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P17 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P16 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P16** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P17** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -122,6 +122,8 @@ P1–P16 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L0-13 | P6 | §9 | live 之后再 `editor_state` | 信封 `readiness=running` |
 | L0-14 | P7 | §9 | `project_stop` 之后再 `editor_state` | 信封 `readiness` 不是 `running` |
 | L0-15 | P8 | §9 | `project_stop` 之后再 `runtime_state` | 信封 `readiness=no_runtime` |
+| L0-16 | P17 | §8.4、§10 | `editor_state` `tool_timeout_sec=explode` | `INVALID_PARAM` |
+| L0-17 | P17 | §8.4 | `editor_manage op=mcp_config format=codex` | 文本含 `tool_timeout_sec` |
 
 ### 5.1 L1 作者态
 
@@ -345,12 +347,12 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 
 | Tool | 层 | 覆盖用例 | 最低读回 |
 | --- | --- | --- | --- |
-| `editor_state` | L0 | L0-01；P2：L0-09；P6：L0-13；P7：L0-14 | title / root / commands；live 后 running；stop 后不是 running |
+| `editor_state` | L0 | L0-01；P2：L0-09；P6：L0-13；P7：L0-14；P17：L0-16 | title / root / commands；live 后 running；stop 后不是 running；假 timeout 为 INVALID_PARAM |
 | `project_doctor` | L0 | L0-02、ENV-04 | ready / mcp / java_required |
 | `session_manage` | L0 | L0-03 | 含本工程 editor |
 | `session_activate` | L0 | L0-03；P2：L5-10；P5：L5-18；P6：L5-20；P8：L5-21 | ok；假 id 为 UNKNOWN_TARGET；其它工程 NOT_ALLOWED；可按 url / cli-live 钉 |
 | `api_manage` | L0 | L0-04；P3：L3-06 | 文档命中；关编辑器走引擎 `/*#` |
-| `editor_manage` | L0 | L0-05、ENV-09 | mcp_config 无 URL。**不验 `quit`**（会杀掉验收进程） |
+| `editor_manage` | L0 | L0-05、ENV-09；P17：L0-17 | mcp_config 无 URL，含 `tool_timeout_sec`。**不验 `quit`**（会杀掉验收进程） |
 | `collection_open` | L1 | L1-01 | ok |
 | `collection_get_hierarchy` | L1 | L1-01、L1-02、L1-16；P2：L1-25 | source + ids；分页 truncated |
 | `collection_save` | L1 | L1-13 | 磁盘含 id |
@@ -441,6 +443,7 @@ SKIP  L5-07  optional screenshot
   "p14_failed": [],
   "p15_failed": [],
   "p16_failed": [],
+  "p17_failed": [],
   "p1_skipped": []
 }
 ```
