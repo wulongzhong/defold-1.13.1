@@ -267,21 +267,34 @@ def parse_debug_ready(text: str) -> Tuple[bool, str, Dict[str, str], Dict[str, A
     return ok, extra, fields, stack
 
 
+def retry_file_op(op, attempts: int = 8):
+    last: Optional[PermissionError] = None
+    for index in range(attempts):
+        try:
+            return op()
+        except PermissionError as exc:
+            last = exc
+            time.sleep(0.05 * (index + 1))
+    if last is not None:
+        raise last
+    raise PermissionError("file is locked")
+
+
 def request_live_control(project: Path, kind: str, body: str, timeout: float = DUMP_WAIT_SEC) -> str:
     directory = control_dir(project)
     directory.mkdir(parents=True, exist_ok=True)
     request = directory / f"{kind}.request"
     ready = directory / f"{kind}.ready"
     if ready.exists():
-        ready.unlink()
+        retry_file_op(lambda: ready.unlink(missing_ok=True))
     tmp = directory / f"{kind}.request.tmp"
     tmp.write_text(body, encoding="utf-8")
     tmp.replace(request)
     deadline = time.time() + timeout
     while time.time() < deadline:
         if ready.is_file():
-            text = ready.read_text(encoding="utf-8", errors="replace")
-            ready.unlink(missing_ok=True)
+            text = retry_file_op(lambda: ready.read_text(encoding="utf-8", errors="replace"))
+            retry_file_op(lambda: ready.unlink(missing_ok=True))
             return text
         time.sleep(0.05)
     raise TimeoutError(f"Timed out waiting for {kind}.ready")
@@ -313,7 +326,7 @@ def keep_input_held(project: Path, body: str, hold: int, timeout: float) -> None
             return
         try:
             request_live_control(project, "input", body, timeout)
-        except TimeoutError:
+        except (TimeoutError, PermissionError):
             return
 
 
@@ -324,8 +337,22 @@ def runtime_input(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     blocked = _need_live(project)
     if blocked:
         return blocked
+    timeout_sec = float(params.get("timeout") or DUMP_WAIT_SEC)
     try:
-        text = request_live_control(project, "input", body, float(params.get("timeout") or DUMP_WAIT_SEC))
+        text = request_live_control(project, "input", body, timeout_sec)
+    except PermissionError:
+        try:
+            text = request_live_control(project, "input", body, timeout_sec)
+        except PermissionError:
+            return error_envelope(
+                "HANDLER_ERROR",
+                "Live engine input.ready is locked. Retry runtime_input.",
+            )
+        except TimeoutError:
+            return error_envelope(
+                "AGENT_CONTROL_TIMEOUT",
+                "Live engine did not write input.ready. Rebuild dmengine with --agent-control.",
+            )
     except TimeoutError:
         return error_envelope(
             "AGENT_CONTROL_TIMEOUT",
@@ -339,7 +366,15 @@ def runtime_input(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     if release:
         keep_input_held(project, body, hold, float(params.get("timeout") or DUMP_WAIT_SEC))
         try:
-            request_live_control(project, "input", release, float(params.get("timeout") or DUMP_WAIT_SEC))
+            request_live_control(project, "input", release, timeout_sec)
+        except PermissionError:
+            try:
+                request_live_control(project, "input", release, timeout_sec)
+            except (TimeoutError, PermissionError):
+                return error_envelope(
+                    "AGENT_CONTROL_TIMEOUT",
+                    "Live engine did not release held input. Rebuild dmengine with --agent-control.",
+                )
         except TimeoutError:
             return error_envelope(
                 "AGENT_CONTROL_TIMEOUT",

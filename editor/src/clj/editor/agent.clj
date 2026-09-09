@@ -296,12 +296,13 @@
           node)))))
 
 (defn- collection-instance-by-id [collection-node go-id]
-  (coll/first-where
-    (fn [item]
-      (let [node-id (:node-id item)]
-        (and (g/node-instance? collection/CollectionInstanceNode node-id)
-             (= go-id (g/node-value node-id :id)))))
-    (:children (g/node-value collection-node :node-outline))))
+  (:node-id
+    (coll/first-where
+      (fn [item]
+        (let [node-id (:node-id item)]
+          (and (g/node-instance? collection/CollectionInstanceNode node-id)
+               (= go-id (g/node-value node-id :id)))))
+      (:children (g/node-value collection-node :node-outline)))))
 
 (defn- resolve-go-instance [collection-node go-id]
   (let [instance (or (get (g/node-value collection-node :go-inst-ids) go-id)

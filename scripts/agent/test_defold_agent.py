@@ -1046,8 +1046,18 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("MISSING_PARAM", empty_input["error"]["code"])
             missing_eval = dispatch_command(project, "game_eval", {"confirm": True}, 1)
             self.assertEqual("MISSING_PARAM", missing_eval["error"]["code"])
-            from agent_intervene import hold_wait_sec
+            from agent_intervene import hold_wait_sec, retry_file_op
 
+            hits = {"n": 0}
+
+            def flaky():
+                hits["n"] += 1
+                if hits["n"] < 3:
+                    raise PermissionError(32, "locked")
+                return "ok"
+
+            self.assertEqual("ok", retry_file_op(flaky, attempts=5))
+            self.assertEqual(3, hits["n"])
             self.assertGreaterEqual(hold_wait_sec(24), 0.4)
             self.assertLess(hold_wait_sec(24), 1.0)
             body, error = format_input_request({"keys": ["left", "space"], "hold": 4})
@@ -1375,6 +1385,28 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual("ok", nested["status"], nested)
             self.assertEqual([256.0, 165.0, 1.0], nested["data"]["properties"]["position"])
+            from unittest.mock import patch
+
+            editor_error = {
+                "status": "error",
+                "error": {
+                    "code": "HANDLER_ERROR",
+                    "message": "class clojure.lang.PersistentArrayMap cannot be cast to class java.lang.Number",
+                },
+            }
+            with patch("agent_ops.intercept_existing_http", return_value=None), patch(
+                "agent_ops.editor_command",
+                return_value=editor_error,
+            ):
+                fallback = dispatch_command(
+                    project,
+                    "gameobject_get_properties",
+                    {"collection": "/game/game.collection", "id": "player"},
+                    2,
+                )
+            self.assertEqual("ok", fallback["status"], fallback)
+            self.assertEqual("disk", fallback["data"]["source"])
+            self.assertEqual([256.0, 165.0, 1.0], fallback["data"]["properties"]["position"])
 
     def test_camera_get_accepts_collection_and_id(self):
         import tempfile

@@ -2300,7 +2300,6 @@ def dispatch_command(
             editor is not None
             and command == "gameobject_get_properties"
             and editor.get("status") == "error"
-            and (editor.get("error") or {}).get("code") == "NOT_FOUND"
         ):
             disk = disk_command(project, command, params)
             result = disk if disk.get("status") == "ok" else editor
