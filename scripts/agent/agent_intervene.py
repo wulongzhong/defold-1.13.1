@@ -297,6 +297,26 @@ def _need_live(project: Path) -> Optional[Dict[str, Any]]:
     )
 
 
+def hold_wait_sec(hold: int) -> float:
+    """Wall time for a hold so vsync-off games still see the key for N frames at 60 Hz."""
+    return min(max(int(hold), 1) / 60.0 + 0.05, 2.0)
+
+
+def keep_input_held(project: Path, body: str, hold: int, timeout: float) -> None:
+    deadline = time.time() + hold_wait_sec(hold)
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.08, remaining))
+        if time.time() >= deadline:
+            return
+        try:
+            request_live_control(project, "input", body, timeout)
+        except TimeoutError:
+            return
+
+
 def runtime_input(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     body, error = format_input_request(params)
     if error:
@@ -317,7 +337,7 @@ def runtime_input(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
     hold = int(fields.get("hold") or params.get("hold") or 1)
     release = held_input_release_body(params)
     if release:
-        time.sleep(min(max(hold, 1) / 30.0 + 0.15, 2.0))
+        keep_input_held(project, body, hold, float(params.get("timeout") or DUMP_WAIT_SEC))
         try:
             request_live_control(project, "input", release, float(params.get("timeout") or DUMP_WAIT_SEC))
         except TimeoutError:

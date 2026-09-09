@@ -955,6 +955,10 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("MISSING_PARAM", empty_input["error"]["code"])
             missing_eval = dispatch_command(project, "game_eval", {"confirm": True}, 1)
             self.assertEqual("MISSING_PARAM", missing_eval["error"]["code"])
+            from agent_intervene import hold_wait_sec
+
+            self.assertGreaterEqual(hold_wait_sec(24), 0.4)
+            self.assertLess(hold_wait_sec(24), 1.0)
             body, error = format_input_request({"keys": ["left", "space"], "hold": 4})
             self.assertIsNone(error)
             self.assertIn("key=left", body)
@@ -1710,6 +1714,47 @@ class ToolQualityTest(unittest.TestCase):
             text = (project / "main" / "main.collection").read_text(encoding="utf-8")
             self.assertNotIn('children: "cap"', text)
             self.assertIn('id: "cube"', text)
+
+    def test_gameobject_create_appends_beside_collection_instance(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game").mkdir()
+            (project / "game" / "game.collection").write_text(
+                'name: "game"\n'
+                "collection_instances {\n"
+                '  id: "player"\n'
+                '  collection: "/game/player.collection"\n'
+                "}\n",
+                encoding="utf-8",
+            )
+            created = dispatch_command(
+                project,
+                "gameobject_create",
+                {"collection": "/game/game.collection", "id": "mcp_marker", "position": [12, 20, 0]},
+                2,
+            )
+            self.assertEqual("ok", created["status"])
+            text = (project / "game" / "game.collection").read_text(encoding="utf-8")
+            self.assertIn("mcp_marker", text)
+            tree = dispatch_command(
+                project,
+                "collection_get_hierarchy",
+                {"path": "/game/game.collection"},
+                2,
+            )
+            ids = []
+            nodes = [tree["data"]]
+            while nodes:
+                node = nodes.pop()
+                if isinstance(node, dict):
+                    if node.get("id"):
+                        ids.append(str(node["id"]))
+                    nodes.extend(node.get("children") or [])
+            self.assertIn("mcp_marker", ids)
+            self.assertIn("player", ids)
 
     def test_disk_transform_and_filesystem_list_delete(self):
         import tempfile

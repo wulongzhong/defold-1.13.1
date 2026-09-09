@@ -48,7 +48,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 
 下面四条同时成立，才叫完整 MCP 的第一里程碑（R1）。少一条都不算。
 
-1. **空工程能成环。** 「做个能左右走的方块」。Agent 只用 MCP / `defold_agent.py`，不装工程插件，能 check、能跑、能根据观察改位置/输入/颜色，直到对上。
+1. **空工程能成环。** 「做个能左右走的方块」。Agent 只用 MCP / `defold_agent.py`，不装工程插件，能 check、能跑、能根据观察改位置/输入/颜色，直到对上。空工程烟测不够：还必须能打开官方样例工程（非自造方块），读回已有 hierarchy / tilemap / 输入，check，observe 玩家与敌人，再用输入改运行态位置。
 2. **观察以结构化快照为主。** 一次观察**始终**把完整 scene_graph 写成文件，MCP 回包默认只有：快照文件句柄、摘要（节点数 / 根 id / 类型直方图）、issues、目标是否还活着。完整树不进上下文。要某一节点或子树，用查询工具打文件。截屏是可选附件，不是 observe 的默认产物，也不是主环必做步骤。
 3. **作者态 ≠ 运行态。** `collection_get_hierarchy` / `gameobject_get_properties` 标明 `source: "editor" | "disk"`。运行时工具标明 `source: "runtime"`。同一 id 两边都能查，Agent 能对比。
 4. **编辑器可关。** 关着时走 bob + dmengine + 磁盘回退。开着时同一工具打编辑器图，创建可 Ctrl+Z。

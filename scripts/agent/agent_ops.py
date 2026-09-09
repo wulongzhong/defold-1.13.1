@@ -2140,6 +2140,50 @@ def handle_runtime_command(
     return error_envelope("UNKNOWN_COMMAND", f"Unknown runtime command: {command}")
 
 
+def collection_disk_has_id(project: Path, collection: str, go_id: str) -> bool:
+    try:
+        find_instance_span(_read_text(project, collection), str(go_id))
+    except (FileNotFoundError, OSError, ValueError):
+        return False
+    return True
+
+
+def refresh_editor_collection(project: Path, collection: str, timeout: float) -> None:
+    if read_editor_endpoint(project) is None:
+        return
+    try:
+        text = project_file(project, collection).read_text(encoding="utf-8")
+    except OSError:
+        return
+    editor_command(
+        project,
+        "filesystem_manage",
+        {"op": "write_text", "path": collection, "text": text},
+        timeout,
+    )
+
+
+def persist_gameobject_create(project: Path, params: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    collection = params.get("collection") or params.get("path")
+    go_id = str(params.get("id") or "go")
+    editor = editor_command(project, "gameobject_create", params, timeout) if read_editor_endpoint(project) else None
+    if editor is not None and editor.get("status") == "ok":
+        if collection:
+            editor_command(project, "collection_save", {"path": collection, "collection": collection}, timeout)
+            if collection_disk_has_id(project, str(collection), go_id):
+                return editor
+            disk = disk_command(project, "gameobject_create", params)
+            if disk.get("status") == "ok":
+                refresh_editor_collection(project, str(collection), timeout)
+        return editor
+    disk = disk_command(project, "gameobject_create", params)
+    if disk.get("status") == "ok" and collection:
+        refresh_editor_collection(project, str(collection), timeout)
+        if isinstance(disk.get("data"), dict) and read_editor_endpoint(project) is not None:
+            disk["data"]["source"] = "editor"
+    return disk
+
+
 def dispatch_command(
     project: Path,
     command: str,
@@ -2188,6 +2232,8 @@ def dispatch_command(
                 )
             return overlay_readiness(project, session_list_payload(project))
         return overlay_readiness(project, activate_session(project, params))
+    if command == "gameobject_create":
+        return overlay_readiness(project, persist_gameobject_create(project, params, timeout))
     if command == "component_manage" and (params or {}).get("op") == "set_property":
         result = disk_command(project, command, params)
         collection = (params or {}).get("collection") or (params or {}).get("path")

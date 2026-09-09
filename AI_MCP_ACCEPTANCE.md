@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P58** 已在打包编辑器上按 ID 实跑。**P59** 是需求里已写、合同还没编号的 atlas / gui / tilemap set_property 缺 path。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P59** 已在打包编辑器上按 ID 实跑。**P60** 用官方 [sample-pixel-line-platformer](https://github.com/defold/sample-pixel-line-platformer) 做复杂工程环：已有玩家 / 敌人 / tilemap / 物理，不是自造方块。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -43,7 +43,8 @@
 | ENV-03 | 不用系统 `java -jar bob.jar` 做 check / observe | 需求 §4、§7.2 |
 | ENV-04 | `project_doctor.java == false` **不是**失败；`java_required` 必须是 `false` | 需求 §3.4 |
 | ENV-05 | 只下 Hosted desktop 的 `Defold-x86_64-win32` | CI |
-| ENV-06 | 测试工程是 `.cache/mcp-acceptance-game/`，不是引擎仓库 | 隔离 |
+| ENV-06 | 烟测工程是 `.cache/mcp-acceptance-game/`，不是引擎仓库 | 隔离 |
+| ENV-13 | 复杂工程是官方 `defold/sample-pixel-line-platformer`，解压/克隆到 `.cache/mcp-demo-platformer/`。不改官方脚本逻辑，不加 `addons/` | 需求 §3 |
 | ENV-07 | `Defold.exe --preferences <test>/prefs.json <test>/game.project` | 不改用户 Defold 配置 |
 | ENV-08 | 不新装 pip 包；只用已有 Python | 环境 |
 | ENV-09 | 客户端协议是 stdio MCP：`command` + `args`，禁止 HTTP URL | 需求 §4.1、§12 |
@@ -65,7 +66,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P59 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P60 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -82,6 +83,7 @@ P1–P59 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | S-05 | 测试工程保留：`game.project`、`prefs.json`、`main/main.collection`、`main/player.script`、`input/game.input_binding`。其它 `main/*` 领域文件可清 | 工程能打开 |
 | S-06 | 启动编辑器，等到**新的** `.internal/editor.port` + `editor.token` | `editor_state` 的 `project_title` 是 `MCP Acceptance` |
 | S-07 | 环境：设 `DEFOLD_EDITOR` 为这份 `Defold.exe`；**取消** `DEFOLD_ENGINE`、`DEFOLD_BOB` | doctor 的 engine 路径含 unpack 或 `agent-engine` 或本 zip，不含 `hosted-desktop` / `bob-jar` / `dynamo_home` |
+| S-08 | 克隆官方 `defold/sample-pixel-line-platformer` 到 `.cache/mcp-demo-platformer/`（可删 `docs/`）。写隔离 `prefs.json` | 有 `game/game.collection`、`game/player.script`、`game/level.tilemap` |
 
 失败闭环（产品问题，不是用例写错）：
 
@@ -96,7 +98,7 @@ P1–P59 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P58** = 已在打包编辑器上跑过。**P59** = 本轮按需求补的编号；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P59** = 已在打包编辑器上跑过。**P60** = 官方样例工程环；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -461,6 +463,22 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 
 关着编辑器时这些写必须 `undoable: false` 且 `source: disk`（P1，需求 §5 L6）。
 
+### 5.8 官方样例工程（P60）
+
+工程：`.cache/mcp-demo-platformer/`，来自官方 `defold/sample-pixel-line-platformer`。主 collection 是 `/game/game.collection`。标题保持官方 `PixelLinePlatformer`，不要改成烟测标题。
+
+| ID | P | 需求 | 步骤 | 断言 |
+| --- | --- | --- | --- | --- |
+| D-01 | P60 | §3、§6 | 用打包编辑器打开官方样例（`--preferences` + 该 `game.project`） | `editor_state.project_title == PixelLinePlatformer`；`project_root` 以 `mcp-demo-platformer` 结尾；`commands` 含 `collection_get_hierarchy` |
+| D-02 | P60 | §3.3、§8.2 | `collection_get_hierarchy` `/game/game.collection` | ids 含 `player`、`level`、`bee1`、`slime`、`instructions`；id 数 ≥ 8；`source` 为 `editor` 或 `disk` |
+| D-03 | P60 | §8.3 | `tilemap_manage get` `/game/level.tilemap`，再 `get_tile` layer=`layer1` x=15 y=6 | get 成功；该格 tile == 16 |
+| D-04 | P60 | §8.3 | `input_binding_manage get` `/input/game.input_binding` | 绑定含 `left`、`right`、`jump`、`fire` |
+| D-05 | P60 | §8.2 | `filesystem_manage list` `/game` | 列表含 `player.script`、`bee.script`、`slime.script`、`level.tilemap`、`dust.particlefx` |
+| D-06 | P60 | §7.2 | `project_check` | `status=ok`；`success` 为真；`launched` 为假 |
+| D-07 | P60 | §7.8 | `runtime_observe` 后 `find` / `get_node` | 回包无整棵 `scene_graph`；能取到 `player`（或 `player/player`）的 `world_position`；树上还能找到 `level` 与至少一个 `bee`/`slime`；节点数 ≥ 12 |
+| D-08 | P60 | §7.9 | 记玩家 x，`runtime_input key=left hold=24`，再 observe | 玩家世界 x 至少减少 0.5 |
+| D-09 | P60 | §8.2、§3 | `gameobject_create` id=`mcp_marker` 到 `/game/game.collection`，再 hierarchy / 磁盘读回 | hierarchy 与 `game.collection` 文本都含 `mcp_marker`。测完恢复官方 collection |
+
 ---
 
 ## 6. 工具覆盖（防漏）
@@ -469,17 +487,17 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 
 | Tool | 层 | 覆盖用例 | 最低读回 |
 | --- | --- | --- | --- |
-| `editor_state` | L0 | L0-01；P2：L0-09；P6：L0-13；P7：L0-14；P17：L0-16 | title / root / commands；live 后 running；stop 后不是 running；假 timeout 为 INVALID_PARAM |
+| `editor_state` | L0 | L0-01；P2：L0-09；P6：L0-13；P7：L0-14；P17：L0-16；P60：D-01 | title / root / commands；live 后 running；stop 后不是 running；假 timeout 为 INVALID_PARAM；官方样例标题可读 |
 | `project_doctor` | L0 | L0-02、ENV-04 | ready / mcp / java_required |
 | `session_manage` | L0 | L0-03 | 含本工程 editor |
 | `session_activate` | L0 | L0-03；P2：L5-10；P5：L5-18；P6：L5-20；P8：L5-21 | ok；假 id 为 UNKNOWN_TARGET；其它工程 NOT_ALLOWED；可按 url / cli-live 钉 |
 | `api_manage` | L0 | L0-04；P3：L3-06 | 文档命中；关编辑器走引擎 `/*#` |
 | `editor_manage` | L0 | L0-05、ENV-09；P17：L0-17 | mcp_config 无 URL，含 `tool_timeout_sec`。**不验 `quit`**（会杀掉验收进程） |
 | `collection_open` | L1 | L1-01；P20：L1-40 | ok；缺 path 为 MISSING_PARAM |
-| `collection_get_hierarchy` | L1 | L1-01、L1-02、L1-16；P2：L1-25；P24：L1-50 | source + ids；分页 truncated；缺 path 为 MISSING_PARAM |
+| `collection_get_hierarchy` | L1 | L1-01、L1-02、L1-16；P2：L1-25；P24：L1-50；P60：D-02、D-09 | source + ids；分页 truncated；缺 path 为 MISSING_PARAM；官方样例含 player/敌人/level |
 | `collection_save` | L1 | L1-13；P21：L1-43 | 磁盘含 id；缺 path 为 MISSING_PARAM |
 | `collection_manage` | L1 | L1-10、L1-11、L1-12；P2：L1-27；P22：L1-46；P24：L1-52；P27：L1-60、L1-61 | create / remove / get_roots / add_instance；缺 id / path / collection 为 MISSING_PARAM |
-| `gameobject_create` | L1 | L1-02、L1-07；P23：L1-47 | hierarchy + position；缺 collection 为 MISSING_PARAM |
+| `gameobject_create` | L1 | L1-02、L1-07；P23：L1-47；P60：D-09 | hierarchy + position；缺 collection 为 MISSING_PARAM；官方样例 collection 可写入并读回 |
 | `gameobject_get_properties` | L1 | L1-02、L1-03、L1-16；P6：L1-30；P28：L1-64 | source + position / components；缺 id / collection 为 MISSING_PARAM |
 | `gameobject_manage` | L1 | L1-03、L1-04；P1：L1-17、L1-18；P6：L1-29；P19：L1-38；P22：L1-45；P25：L1-53 | set_property 读回；find 命中；假 op 为 UNKNOWN_OP；缺 property / name / id 为 MISSING_PARAM |
 | `component_add` | L1 | L1-09；P24：L1-51 | 有 label；缺 id 为 MISSING_PARAM |
@@ -488,9 +506,9 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `script_attach` | L1 | L1-06、L1-07；P23：L1-48 | components；缺 id 为 MISSING_PARAM |
 | `script_patch` | L1 | L1-08、L2-05；P23：L1-49；P28：L1-62、L1-63 | 文本变化；缺 path / old_text / new_text 为 MISSING_PARAM |
 | `script_manage` | L1 | L1-08；P1：L1-20；P20：L1-42；P40：L1-65 | read 文本；缺 path / id 为 MISSING_PARAM |
-| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32；P15：L1-34；P16：L1-33；P18：L1-35–L1-37；P25：L1-55；P26：L1-56–L1-58；P27：L1-59 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` / 无前导 `/` 为 INVALID_PARAM；缺 query / path / dest / text |
+| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32；P15：L1-34；P16：L1-33；P18：L1-35–L1-37；P25：L1-55；P26：L1-56–L1-58；P27：L1-59；P60：D-05 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` / 无前导 `/` 为 INVALID_PARAM；缺 query / path / dest / text；官方 `/game` 能列出脚本与 tilemap |
 | `batch_execute` | L1 | L1-15；P2：L1-28；P21：L1-44 | rolled_back；混 check 时 atomic=false；缺 commands 为 MISSING_PARAM |
-| `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
+| `project_check` | L2 | L2-01、L2-05、L2-06；P60：D-06 | launched=false；坏 Lua 有 file:line；官方样例 check 成功 |
 | `project_build` | L2 | L2-02 | launched=false |
 | `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13；P11：L2-15；P12：L2-16；P14：L2-18 | lines 或 issues；分页；severity/prints；editor-file；engine-log；domain；q；默认 source；假 source 为 INVALID_PARAM |
 | `diagnostics_read` | L2 | L2-04；P13：L2-17 | issues 列表；不重编；不写 last_check |
@@ -499,18 +517,18 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22；P11：L3-10 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump；假 mode |
 | `project_stop` | L3 | L3-04、L5-08 | 进程死 |
 | `runtime_state` | L4 | L4-03；P8：L0-15 | alive；stop 后 no_runtime |
-| `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24；P6：L4-27；P7：L2-14、L4-30 | 句柄 + 摘要；无 live 拒绝；快照只留 8；dest 不轮转；logs.lines ≤ 40 |
+| `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24；P6：L4-27；P7：L2-14、L4-30；P60：D-07 | 句柄 + 摘要；无 live 拒绝；快照只留 8；dest 不轮转；logs.lines ≤ 40；官方样例节点数 ≥ 12 |
 | `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23；P6：L4-25、L4-26、L4-28；P7：L4-31–L4-35；P8：L4-36–L4-40；P9：L4-41–L4-45；P10：L4-46–L4-49；P11：L4-50；P12：L4-53 | get_node 是 GO；分页；默认 latest / list_ids 200；id_glob；Pointer 校验；NOT_FOUND hint；默认 depth 8 |
 | `runtime_get_hierarchy` | L4 | L4-04；P3：L4-18；P6：L4-29 | source=runtime；分页 truncated；默认 limit 200 |
 | `runtime_get_properties` | L4 | L4-05；P11：L4-51；P12：L4-52 | source=runtime；缺 id 为 MISSING_PARAM；默认读 latest |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
 | `runtime_screenshot` | L5 | L5-07 | 可选 PNG |
-| `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17；P13：L5-24；P14：L5-26 | player x 变小；无 live 拒绝；hold / 事件上限；缺 key / 假 key |
+| `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17；P13：L5-24；P14：L5-26；P60：D-08 | player x 变小；无 live 拒绝；hold / 事件上限；缺 key / 假 key；官方样例玩家也能被 left 推动 |
 | `game_eval` | L5 | L5-01、L5-02、L5-05；P3：L5-14；P13：L5-25 | 无 confirm 拒绝；go.* 返回向量；超 4096 字节拒绝；缺 code 为 MISSING_PARAM |
 | `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19；P13：L5-22、L5-23；P14：L5-27 | 不进 `debug>`；命中后 frames；status 仍带上次栈；假 op / 缺 file / 缺 line |
 | `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22；P10：L6-27；P29：L6-30；P30：L6-33；P31：L6-38；P34：L6-46、L6-47；P35：L6-48–L6-50；P36：L6-51–L6-53；P37：L6-54–L6-56；P38：L6-57–L6-59；P39：L6-60–L6-62；P40：L6-63、L6-64；P42：L6-68–L6-70；P43：L6-71–L6-73；P44：L6-74–L6-76；P45：L6-77–L6-79；P46：L6-80–L6-82；P47：L6-83–L6-85；P48：L6-87；P49：L6-91；P50：L6-92–L6-94；P51：L6-95–L6-97；P52：L6-98–L6-100；P53：L6-101–L6-103；P54：L6-104–L6-106；P55：L6-107、L6-108；P56：L6-111；P57：L6-112–L6-114；P58：L6-115；P59：L6-117 | 文件 + get + list；假 op 为 UNKNOWN_OP；缺 property / id / path / op / image / font / sound / script 为 MISSING_PARAM |
 | `camera_manage` | L6 | L6-23；P31：L6-36、L6-37；P32：L6-41 | cube 上有 camera；缺 path / collection+id / op 为 MISSING_PARAM |
-| `tilemap_manage` / `gui_manage` / `input_binding_manage` | L6 | L6-03–L6-05；P29：L6-31、L6-32；P30：L6-34、L6-35；P32：L6-39、L6-40；P33：L6-42–L6-44；P34：L6-45；P41：L6-65–L6-67；P48：L6-86、L6-88；P49：L6-89、L6-90；P56：L6-109、L6-110；P58：L6-116；P59：L6-118、L6-119 | 读回 tile / text / jump；缺 property / tile / id / x,y / path / action / input / op / tile_set / script / texture 为 MISSING_PARAM |
+| `tilemap_manage` / `gui_manage` / `input_binding_manage` | L6 | L6-03–L6-05；P29：L6-31、L6-32；P30：L6-34、L6-35；P32：L6-39、L6-40；P33：L6-42–L6-44；P34：L6-45；P41：L6-65–L6-67；P48：L6-86、L6-88；P49：L6-89、L6-90；P56：L6-109、L6-110；P58：L6-116；P59：L6-118、L6-119；P60：D-03、D-04 | 读回 tile / text / jump；缺 property / tile / id / x,y / path / action / input / op / tile_set / script / texture 为 MISSING_PARAM；官方样例 level.tilemap (15,6)=16，绑定含 jump/fire |
 
 ---
 
@@ -608,6 +626,7 @@ SKIP  L5-07  optional screenshot
   "p57_failed": [],
   "p58_failed": [],
   "p59_failed": [],
+  "p60_failed": [],
   "p1_skipped": []
 }
 ```
