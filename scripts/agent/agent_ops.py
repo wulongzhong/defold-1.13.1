@@ -1011,7 +1011,9 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
             path = params.get("path")
             if not path:
                 return error_envelope("MISSING_PARAM", "Missing path")
-            text = patch_text(_read_text(project, path), params.get("old_text", ""), params.get("new_text", ""))
+            if not isinstance(params.get("old_text"), str) or not isinstance(params.get("new_text"), str):
+                return error_envelope("MISSING_PARAM", "script_patch needs old_text and new_text")
+            text = patch_text(_read_text(project, path), params.get("old_text"), params.get("new_text"))
             _write_text(project, path, text, overwrite=True)
             return ok_envelope({"path": sanitize_proj_path(path), "patched": True, "source": "disk"})
         if command == "script_manage" and params.get("op") == "read":

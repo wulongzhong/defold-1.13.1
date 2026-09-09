@@ -143,6 +143,10 @@ class DiskCommandTest(unittest.TestCase):
             self.assertEqual("ok", patched["status"])
             text = (project / "main" / "cube.script").read_text(encoding="utf-8")
             self.assertIn("function init(self) -- hi", text)
+            missing_old = disk_command(project, "script_patch", {"path": "/main/cube.script", "new_text": "x"})
+            self.assertEqual("MISSING_PARAM", missing_old["error"]["code"])
+            missing_new = disk_command(project, "script_patch", {"path": "/main/cube.script", "old_text": "function init(self)"})
+            self.assertEqual("MISSING_PARAM", missing_new["error"]["code"])
 
     def test_snapshot_read_text_is_blocked(self):
         import tempfile
@@ -1767,6 +1771,8 @@ class ToolQualityTest(unittest.TestCase):
             self.assertAlmostEqual(0.7071, rotation[3], places=3)
             self.assertEqual([2.0, 2.0, 2.0], props["data"]["properties"]["scale"])
             self.assertEqual(["hat"], props["data"]["children"])
+            missing_coll = dispatch_command(project, "gameobject_get_properties", {"id": "cube"}, 2)
+            self.assertEqual("MISSING_PARAM", missing_coll["error"]["code"])
             listed = dispatch_command(project, "filesystem_manage", {"op": "list", "path": "/"}, 2)
             names = {item["name"] for item in listed["data"]["entries"]}
             self.assertIn("main", names)
