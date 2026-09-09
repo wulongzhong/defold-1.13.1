@@ -1435,6 +1435,18 @@ class ToolQualityTest(unittest.TestCase):
             self.assertNotEqual(result["data"]["matches"], page["data"]["matches"])
             missing = dispatch_command(project, "filesystem_manage", {"op": "search"}, 2)
             self.assertEqual("MISSING_PARAM", missing["error"]["code"])
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "filesystem_manage", {"op": "mkdir"}, 2)["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "filesystem_manage", {"op": "copy", "path": "/main/a.script"}, 2)["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "filesystem_manage", {"op": "delete"}, 2)["error"]["code"],
+            )
             configure_mcp(["atlas"])
             try:
                 listed = handle_rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, project, 2)
