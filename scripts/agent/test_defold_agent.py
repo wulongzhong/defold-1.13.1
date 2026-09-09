@@ -1176,6 +1176,14 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ok", added["status"])
             got = dispatch_command(project, "atlas_manage", {"op": "get", "path": "/main/sprites.atlas"}, 2)
             self.assertIn("/main/box.png", got["data"]["images"])
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "atlas_manage", {"op": "set_property", "path": "/main/sprites.atlas", "value": "x"}, 2)["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "atlas_manage", {"op": "remove", "path": "/main/sprites.atlas"}, 2)["error"]["code"],
+            )
             dispatch_command(project, "input_binding_manage", {"op": "create", "path": "/input/game.input_binding"}, 2)
             dispatch_command(
                 project,
@@ -2004,6 +2012,14 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual("99", node["data"]["text"])
             self.assertEqual([10.0, 20.0, 0.0], node["data"]["position"])
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "gui_manage", {"op": "set_node", "path": "/main/hud.gui", "id": "score"}, 2)["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "gui_manage", {"op": "set_node", "path": "/main/hud.gui", "property": "text", "value": "99"}, 2)["error"]["code"],
+            )
             preview = dispatch_command(project, "editor_preview", {"path": "/main/hud.gui"}, 1)
             self.assertEqual("EDITOR_UNREACHABLE", preview["error"]["code"])
             self.assertIn("runtime_screenshot", preview["error"].get("hint") or "")
@@ -2035,6 +2051,24 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("ok", painted["status"])
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(
+                    project,
+                    "tilemap_manage",
+                    {"op": "set_tile", "path": "/main/level.tilemap", "layer": "ground", "x": 2, "y": 3},
+                    2,
+                )["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(
+                    project,
+                    "tilemap_manage",
+                    {"op": "set_tile", "path": "/main/level.tilemap", "layer": "ground", "tile": 7},
+                    2,
+                )["error"]["code"],
+            )
             cell = dispatch_command(
                 project,
                 "tilemap_manage",
