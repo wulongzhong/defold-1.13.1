@@ -23,7 +23,7 @@
 
 本轮只验这一条用户路径：
 
-1. 从 Hosted desktop 最新成功 run 只下载 `Defold-x86_64-win32`（已解压且 `editor_sha1` 仍对得上则不必重下）。
+1. 本轮 `main` push 对应的 Hosted desktop run 一旦打出 `Defold-x86_64-win32`，就只下这个 zip 换包（不等 macOS editor；不下载 `bob-jar` / 单独 `dmengine`）。
 2. 解压到仓库 `.cache/`，用自带 JRE 的 `Defold.exe` **只打开一次**官方样例。
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。**整表只拉一次** live（`project_run mode=live`）。关编辑器 / 再 live 只允许出现在表尾 X 段。
@@ -67,9 +67,9 @@
 5. 没有做「禁止」列里的事。
 
 签字：§5 全部 **P0** 通过，且 §2 硬约束未破。  
-S/A/C/R/N/X **必须实跑**；漏跑 = 失败。禁止把没跑的条目标成通过。仅 R-16（可选截屏）允许 `SKIP`。
+S/A/C/R/M/T/N/X **必须实跑**；漏跑 = 失败。禁止把没跑的条目标成通过。仅 R-16（可选截屏）允许 `SKIP`。
 
-会话约束：A/C 阶段不得 `project_run`。R+N 共用同一次 live，不得 `project_stop`。X 之前不得杀编辑器。
+会话约束：A/C 阶段不得 `project_run`。R+M+T+N 共用同一次 live，不得 `project_stop`。X 之前不得杀编辑器。单次调用通过不够：M 段连打上限，T 段随机 30–60 分钟。
 
 ---
 
@@ -77,9 +77,9 @@ S/A/C/R/N/X **必须实跑**；漏跑 = 失败。禁止把没跑的条目标成�
 
 | 步骤 | 动作 | 通过 |
 | --- | --- | --- |
-| S-01 | `gh run list --workflow "Hosted desktop" --branch main`，取最新 success | 有 `Defold-x86_64-win32` |
+| S-01 | `gh run list --workflow "Hosted desktop" --branch main`，等到**本轮 push** 的 run 已有 artifact `Defold-x86_64-win32` | 有 zip |
 | S-02 | 停掉旧 `Defold.exe` / 测试工程相关 `java.exe` / `dmengine.exe` | 旧进程不挡 |
-| S-03 | 仅当解压目录缺失或 `editor_sha1` 对不上当前要验的编辑器代码时，才删旧解压并只下新 zip | `Defold.exe` 存在 |
+| S-03 | 本轮 `main` push 对应的 Hosted desktop run 一旦打出 `Defold-x86_64-win32`，就停旧进程、删旧解压、只下这个 zip（不等 macOS editor；不下载 `bob-jar` / 单独 `dmengine`） | `Defold.exe` 存在 |
 | S-04 | jar 内 `libexec/x86_64-win32/dmengine.exe` 含 `agent-control`、`runtime-dump`、`quit-after-frames` | 注入成功 |
 | S-05 | 官方样例保留官方文件。临时只写 `/mcp/` | 工程能打开 |
 | S-06 | **启动一次**编辑器，等到**新的** `.internal/editor.port` + `editor.token` | `editor_state.project_title` 是 `PixelLinePlatformer` |
@@ -89,8 +89,8 @@ S/A/C/R/N/X **必须实跑**；漏跑 = 失败。禁止把没跑的条目标成�
 失败闭环（产品问题，不是用例写错）：
 
 ```text
-修源码 → commit + push main →（仅当编辑器/引擎必须进包）等 Hosted desktop zip
-→ 停进程 → 必要时换 zip → 从 S-06 再来 → §5 整表重跑
+修源码 → commit + push main → 等本次 Hosted desktop 的 `Defold-x86_64-win32`
+→ 停进程 → 换 zip → 从 S-06 再来 → §5 整表（含 T）重跑
 ```
 
 禁止：修完只复测失败的那一条。禁止每个 ID 后重开引擎。
@@ -187,7 +187,36 @@ A-25 领域文件（均在 `/mcp/`）：`sprites.atlas`、`tiles.tilesource`、`
 | R-17 | — | §7.8 | `resources/list` + `resources/read` `defold://runtime/snapshot/{id}` | 读回是摘要，**没有** `scene_graph` |
 | R-18 | — | §10 | `runtime_snapshot_query` 假 snapshot id | `SNAPSHOT_NOT_FOUND` |
 
-### 5.5 合并负例（N）— live 仍开着，不 stop
+### 5.5 连打与内存（M）— 仍是同一次 live，不 stop
+
+单次 `status=ok` 不算过。必须连打，并读回上限。快照保留上限与产品 `RETAIN` 一致，为 **8**。默认回包硬上限 **48 KB**（需求 §7）。
+
+| ID | P | 需求 | 步骤 | 断言 |
+| --- | --- | --- | --- | --- |
+| M-01 | P0 | §3.2、§7.8 | 连续 `runtime_observe` **12** 次（超过保留上限） | 每次 `status=ok`，`data`/`data.snapshot` **都没有** `scene_graph`，整份信封 JSON 小于 48 KB，12 个 snapshot id 互不相同。live **同一 pid**。目录里匹配 `\d{8}T\d{6}Z-*.json` 的文件数 ≤ 8。第 1 次的 id 再 `get_node` 为 `SNAPSHOT_NOT_FOUND`；第 12 次的 id 仍能 `get_node` 到玩家 `world_position` |
+| M-02 | — | §7.8 | 连续 20 轮：`get_node` 玩家 + `find` + `list_ids` | 每轮 `status=ok`，回包没有 `scene_graph`，每份信封小于 48 KB。最后一轮仍有玩家 `world_position` |
+| M-03 | — | §3.3、§8.2 | 连续 8 轮：`collection_get_hierarchy` + `tilemap_manage get_tile` (15,6) + `editor_state` | 每轮 hierarchy 含 `player`/`level`；tile 仍 == 16；title 仍是 `PixelLinePlatformer`。后一轮信封字节数 ≤ 前一轮的 2 倍 + 8 KB |
+| M-04 | — | §7.9 | 4 个循环：`runtime_input key=right hold=4` → observe → `key=left hold=4` → observe | 每次都能 `get_node` 玩家；世界 x 有限（`abs(x) < 10000`）。live 仍是 M-01 那个 pid |
+| M-05 | — | §3.2 | 读 live dmengine 的 WorkingSet：M 段开始 vs M-04 之后 | 结束值 ≤ `max(开始*3, 开始+256MB)`。读不到 WorkingSet = 失败 |
+| M-06 | — | §7.8 | `runtime_snapshot_query op=list`；`resources/list` 8 次 | list 的 snapshot 条数 ≤ 8。每次 resources/list 的 JSON **没有** `scene_graph` |
+| M-07 | — | §10 | 连续 12 次 `atlas_manage op=get`（无 path） | 全部 `MISSING_PARAM`；live 仍 alive |
+
+### 5.6 同一 live 随机长跑（T）— 仍不 stop、不重开引擎
+
+T 段接在 M 之后、N 之前。禁止 `project_stop` / 再 `project_run` / `editor_manage quit` / 改官方 `player.script` / `filesystem_manage read_text` 快照 JSON。关编辑器只在 X。一步失败立刻停，报告写清 `soak_seed`、步号、tool、回包。修产品，不放宽本表断言。
+
+随机池只打读 + `/mcp/` 或 `mcp_marker` 安全写 + 有限干预 + 已有稳定 `error.code` 负例。权重偏读。`project_stop` / `project_run` / `quit` 只允许出现在 R/X 已有步骤；T 池用读和安全写代替这三者及其破坏性 op。
+
+墙钟由 `DEFOLD_ACCEPTANCE_SOAK_SEC` 控制，默认 **1800**，上限 **3600**。
+
+| ID | P | 需求 | 步骤 | 断言 |
+| --- | --- | --- | --- | --- |
+| T-01 | P0 | §3.2 | `random.Random(soak_seed)` 在同一 live 上随机连打 | 墙钟 ≥ 30 分钟且 ≤ 60 分钟。`soak_seed` 写入报告。随机步数 ≥ 80。`scripts/agent/agent_mcp.py` 的每个 tool 名至少被抽到 1 次（`project_stop` / `project_run` / `quit` 除外，它们只在 R/X） |
+| T-02 | — | §3.2、§7.8 | 每 20 步做不变量 | 同一 live pid；id 快照文件 ≤ 8；observe / snapshot_query 信封无 `scene_graph` 且 < 48 KB；`/game/level.tilemap` `(15,6)==16`；`player/player` 世界 x 有限（`abs < 10000`）；title 仍是 `PixelLinePlatformer` |
+| T-03 | — | §3.2 | 读 live dmengine WorkingSet：T 开始 vs T 结束 | 结束值 ≤ `max(T开始*3, T开始+256MB)`。读不到 WorkingSet = 失败 |
+| T-04 | — | §3.2、§3.3 | T 结束后立刻 `get_node` 玩家 + `get_tile` (15,6) + `live_status` | 有玩家 `world_position`；tile == 16；live 仍 alive。然后才进 N |
+
+### 5.7 合并负例（N）— live 仍开着，不 stop
 
 | ID | P | 需求 | 步骤 | 断言 |
 | --- | --- | --- | --- | --- |
@@ -201,7 +230,7 @@ A-25 领域文件（均在 `/mcp/`）：`sprites.atlas`、`tiles.tilesource`、`
 | N-08 | — | §7.5 | `session_activate` 假 id | `UNKNOWN_TARGET` |
 | N-09 | — | §10 | `editor_state` `tool_timeout_sec=explode` | `INVALID_PARAM` |
 
-### 5.6 表尾关停（X）— 整表唯一允许的引擎/编辑器重开
+### 5.8 表尾关停（X）— 整表唯一允许的引擎/编辑器重开
 
 | ID | P | 需求 | 步骤 | 断言 |
 | --- | --- | --- | --- | --- |
@@ -224,49 +253,49 @@ X-06 是整表唯一的第二次 live。X 段结束后 `project_stop`，不把�
 
 | Tool | 覆盖用例 | 最低读回 |
 | --- | --- | --- |
-| `editor_state` | A-01、A-05、R-04、N-09 | title / root / commands；live 后 running |
-| `project_doctor` | A-02、ENV-04 | ready / mcp / java_required |
-| `session_manage` | A-03 | 含本工程 editor |
-| `session_activate` | A-03、N-08 | ok；假 id 为 UNKNOWN_TARGET |
-| `api_manage` | A-04、X-05 | 文档命中；关编辑器走引擎 `/*#` |
-| `editor_manage` | A-05、ENV-09、A-06 | mcp_config 无 URL。**不验 `quit`** |
-| `collection_open` | A-07 | ok |
-| `collection_get_hierarchy` | A-09、A-15、N-03 | source + 官方样例 ids；缺 path 为 MISSING_PARAM |
-| `collection_save` | A-16 | 磁盘含 mcp_marker |
-| `collection_manage` | A-23 | create / get_roots |
-| `gameobject_create` | A-15、N-03 | hierarchy + 磁盘；缺 collection 为 MISSING_PARAM |
-| `gameobject_get_properties` | A-08、A-17、A-18、A-26 | source + position / components |
-| `gameobject_manage` | A-17 | find + set_property 读回 |
-| `component_add` | A-18 | 有 label |
-| `component_manage` | A-26 | camera 添加后 properties 可读 |
-| `script_create` | A-19 | 文件 + init |
-| `script_attach` | A-20 | components |
-| `script_patch` | A-19、C-06、N-03 | 文本变化；缺 old/new 为 MISSING_PARAM |
-| `script_manage` | A-19 | read 文本 |
-| `filesystem_manage` | A-12、A-21、N-02 | 读写搜拷；拒读快照 |
-| `batch_execute` | A-22 | rolled_back |
-| `project_check` | C-01、C-06 | launched=false；坏 Lua 有 file:line |
-| `project_build` | C-02 | launched=false |
-| `logs_read` | C-03、N-07 | lines 或 issues；假 source 为 INVALID_PARAM |
-| `diagnostics_read` | C-04 | issues；不写 last_check |
-| `editor_preview` | C-05 | PNG 魔数 |
-| `project_manage` | A-24 | title / version |
-| `project_run` | R-01、R-03、X-03、X-06、N-07 | 一个 live；batch 不留 live；假 mode |
-| `project_stop` | X-01 | 进程死 |
-| `runtime_state` | R-04 | alive |
-| `runtime_observe` | R-05、R-06、X-02、X-06 | 句柄 + 摘要；无 live 拒绝；节点数 ≥ 12 |
-| `runtime_snapshot_query` | R-07–R-09、R-11、R-18、X-02 | get_node 是 GO；假 id 为 SNAPSHOT_NOT_FOUND |
-| `runtime_get_hierarchy` | R-10 | source=runtime |
-| `runtime_get_properties` | R-10 | source=runtime |
-| `runtime_diff` | R-11 | 两份真快照 |
-| `runtime_screenshot` | R-16 | 可选 PNG |
-| `runtime_input` | R-12、N-05 | 玩家 x 变小；缺 key / 假 key / hold 上限 |
-| `game_eval` | R-14、N-04 | 无 confirm 拒绝；坐标同量级 |
-| `runtime_debug` | R-15、N-06 | 不进 `debug>` |
-| `atlas_manage` … `appmanifest_manage` | A-25、N-01、X-07 | `/mcp/` 文件 + get + list；缺 path/op 为 MISSING_PARAM |
-| `camera_manage` | A-26、N-01 | mcp_marker 上有 camera |
-| `tilemap_manage` / `gui_manage` / `input_binding_manage` | A-10、A-11、A-27、A-28、N-01 | 官方 tile==16；绑定含 jump/fire；自造 tile/gui 读回 |
-| `tilesource_manage` / `particlefx_manage` | A-13、A-14、A-25 | 官方 get + `/mcp/` create |
+| `editor_state` | A-01、A-05、R-04、N-09、T-01、T-02 | title / root / commands；live 后 running；长跑 title 不变 |
+| `project_doctor` | A-02、ENV-04、T-01 | ready / mcp / java_required |
+| `session_manage` | A-03、T-01 | 含本工程 editor |
+| `session_activate` | A-03、N-08、T-01 | ok；假 id 为 UNKNOWN_TARGET |
+| `api_manage` | A-04、X-05、T-01 | 文档命中；关编辑器走引擎 `/*#` |
+| `editor_manage` | A-05、ENV-09、A-06、T-01 | mcp_config 无 URL。**不验 `quit`** |
+| `collection_open` | A-07、T-01 | ok |
+| `collection_get_hierarchy` | A-09、A-15、N-03、M-03、T-01 | source + 官方样例 ids；连打读回不变；缺 path 为 MISSING_PARAM |
+| `collection_save` | A-16、T-01 | 磁盘含 mcp_marker |
+| `collection_manage` | A-23、T-01 | create / get_roots |
+| `gameobject_create` | A-15、N-03、T-01 | hierarchy + 磁盘；缺 collection 为 MISSING_PARAM |
+| `gameobject_get_properties` | A-08、A-17、A-18、A-26、T-01 | source + position / components |
+| `gameobject_manage` | A-17、T-01 | find + set_property 读回 |
+| `component_add` | A-18、T-01 | 有 label |
+| `component_manage` | A-26、T-01 | camera 添加后 properties 可读 |
+| `script_create` | A-19、T-01 | 文件 + init |
+| `script_attach` | A-20、T-01 | components |
+| `script_patch` | A-19、C-06、N-03、T-01 | 文本变化；缺 old/new 为 MISSING_PARAM |
+| `script_manage` | A-19、T-01 | read 文本 |
+| `filesystem_manage` | A-12、A-21、N-02、T-01 | 读写搜拷；拒读快照 |
+| `batch_execute` | A-22、T-01 | rolled_back |
+| `project_check` | C-01、C-06、T-01 | launched=false；坏 Lua 有 file:line |
+| `project_build` | C-02、T-01 | launched=false |
+| `logs_read` | C-03、N-07、T-01 | lines 或 issues；假 source 为 INVALID_PARAM |
+| `diagnostics_read` | C-04、T-01 | issues；不写 last_check |
+| `editor_preview` | C-05、T-01 | PNG 魔数 |
+| `project_manage` | A-24、T-01 | title / version |
+| `project_run` | R-01、R-03、X-03、X-06、N-07 | 一个 live；batch 不留 live；假 mode。**T 不抽** |
+| `project_stop` | X-01 | 进程死。**T 不抽** |
+| `runtime_state` | R-04、T-01 | alive |
+| `runtime_observe` | R-05、R-06、M-01、M-04、T-01、T-02、X-02、X-06 | 句柄 + 摘要；连打 / 长跑仍无整树；文件数 ≤ 8；无 live 拒绝；节点数 ≥ 12 |
+| `runtime_snapshot_query` | R-07–R-09、R-11、R-18、M-01、M-02、M-06、T-01、T-02、T-04、X-02 | get_node 是 GO；连打切片小于 48 KB；假/已淘汰 id 为 SNAPSHOT_NOT_FOUND |
+| `runtime_get_hierarchy` | R-10、T-01 | source=runtime |
+| `runtime_get_properties` | R-10、T-01 | source=runtime |
+| `runtime_diff` | R-11、T-01 | 两份真快照 |
+| `runtime_screenshot` | R-16、T-01 | 可选 PNG |
+| `runtime_input` | R-12、M-04、N-05、T-01 | 玩家 x 变小；左右连打 x 仍有限；缺 key / 假 key / hold 上限 |
+| `game_eval` | R-14、N-04、T-01 | 无 confirm 拒绝；坐标同量级 |
+| `runtime_debug` | R-15、N-06、T-01 | 不进 `debug>`。T 只用 status/stack/continue |
+| `atlas_manage` … `appmanifest_manage` | A-25、N-01、T-01、X-07 | `/mcp/` 文件 + get + list；缺 path/op 为 MISSING_PARAM |
+| `camera_manage` | A-26、N-01、T-01 | mcp_marker 上有 camera |
+| `tilemap_manage` / `gui_manage` / `input_binding_manage` | A-10、A-11、A-27、A-28、N-01、T-01、T-02、T-04 | 官方 tile==16；绑定含 jump/fire；自造 tile/gui 读回；长跑 tile 仍 16 |
+| `tilesource_manage` / `particlefx_manage` | A-13、A-14、A-25、T-01 | 官方 get + `/mcp/` create |
 
 ---
 
@@ -311,9 +340,14 @@ SKIP  R-16  optional screenshot
   "a_failed": [],
   "c_failed": [],
   "r_failed": [],
+  "m_failed": [],
+  "t_failed": [],
   "n_failed": [],
   "x_failed": [],
-  "skipped": []
+  "skipped": [],
+  "soak_seed": 0,
+  "soak_steps": 0,
+  "soak_sec": 0
 }
 ```
 
@@ -334,6 +368,8 @@ SKIP  R-16  optional screenshot
   → observe 摘要（R-05）
   → get_node player/player = 运行时 world_position（R-07）
   → input left，x 变小（R-12）
+  → 连打 observe / query / 输入，快照 ≤ 8，回包无整树（M-01–M-07）
+  → 同一 live 随机 30–60 分钟（T-01–T-04）
   → 负例不重开进程（N-*）
   → project_stop（X-01）后才关编辑器
 ```

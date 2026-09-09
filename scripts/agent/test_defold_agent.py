@@ -406,6 +406,43 @@ class RuntimeSnapshotTest(unittest.TestCase):
             hierarchy = __import__("agent_runtime", fromlist=["runtime_get_hierarchy"]).runtime_get_hierarchy(project, {})
             self.assertEqual(200, hierarchy["data"]["limit"])
 
+    def test_twelve_observes_keep_only_eight_snapshot_files(self):
+        import tempfile
+        from pathlib import Path
+
+        from agent_runtime import RE_SNAPSHOT_ID_FILE, RETAIN, snapshots_dir
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project, _record = self._project_with_snapshot(tmp)
+            raw = Path(tmp) / "raw.json"
+            first_id = None
+            last_id = None
+            for frame in range(12):
+                record = wrap_engine_dump(project, raw, mode="live", frame=frame, target={})
+                if first_id is None:
+                    first_id = record["id"]
+                last_id = record["id"]
+            files = [path for path in snapshots_dir(project).glob("*.json") if RE_SNAPSHOT_ID_FILE.match(path.name)]
+            self.assertLessEqual(len(files), RETAIN)
+            self.assertEqual(8, RETAIN)
+            missing = query_snapshot(project, {"op": "get_node", "id": "cube", "snapshot": first_id})
+            self.assertEqual("SNAPSHOT_NOT_FOUND", missing["error"]["code"])
+            kept = query_snapshot(project, {"op": "get_node", "id": "cube", "snapshot": last_id})
+            self.assertEqual("ok", kept["status"])
+
+    def test_acceptance_t_ids_are_in_spec(self):
+        from pathlib import Path
+
+        from acceptance_cases import P0_IDS, SPEC_PATH, T_IDS
+
+        spec = Path(__file__).resolve().parents[2] / SPEC_PATH
+        text = spec.read_text(encoding="utf-8")
+        for cid in T_IDS:
+            self.assertIn(cid, text)
+        self.assertIn("T-01", P0_IDS)
+        self.assertIn("t_failed", text)
+        self.assertIn("soak_seed", text)
+
     def test_get_path(self):
         import tempfile
 
