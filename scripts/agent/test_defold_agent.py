@@ -704,6 +704,60 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("error", blocked["status"])
             self.assertEqual("EDITOR_UNREACHABLE", blocked["error"]["code"])
 
+    def test_compare_authoring_resolves_collection_instance_path(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from agent_runtime import wrap_engine_dump
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            game = Path(tmp) / "game"
+            game.mkdir()
+            (game / "player.collection").write_text(
+                'name: "player"\nembedded_instances {\n  id: "player"\n  data: ""\n'
+                "  position {\n    x: 0.0\n    y: 0.0\n    z: 0.0\n  }\n}\n",
+                encoding="utf-8",
+            )
+            (game / "game.collection").write_text(
+                'name: "game"\ncollection_instances {\n  id: "player"\n'
+                '  collection: "/game/player.collection"\n'
+                "  position {\n    x: 256.0\n    y: 165.0\n    z: 1.0\n  }\n}\n",
+                encoding="utf-8",
+            )
+            raw = Path(tmp) / "raw.json"
+            raw.write_text(
+                json.dumps(
+                    {
+                        "id": "game",
+                        "type": "collectionc",
+                        "children": [
+                            {
+                                "id": "player/player",
+                                "type": "goc",
+                                "position": [214.0, 144.0, 1.0],
+                                "world_position": [214.0, 144.0, 1.0],
+                                "children": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            wrap_engine_dump(project, raw, mode="live", frame=1, target={})
+            compared = dispatch_command(
+                project,
+                "runtime_snapshot_query",
+                {"op": "compare_authoring", "id": "player/player", "collection": "/game/game.collection"},
+                2,
+            )
+            self.assertEqual("ok", compared["status"], compared)
+            item = compared["data"]["items"][0]
+            self.assertEqual([256.0, 165.0, 1.0], item["authoring"]["position"])
+            self.assertEqual([214.0, 144.0, 1.0], item["runtime"]["world_position"])
+            self.assertTrue(any(delta["property"] in {"position", "world_position"} for delta in item["deltas"]))
+
     def test_stdio_mcp_resources_and_prompts(self):
         import json
         import tempfile

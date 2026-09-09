@@ -48,7 +48,7 @@ Agent 面对的是作者态（`.collection` / `.go` / 编辑器属性），不�
 
 下面四条同时成立，才叫完整 MCP 的第一里程碑（R1）。少一条都不算。
 
-1. **空工程能成环。** 「做个能左右走的方块」。Agent 只用 MCP / `defold_agent.py`，不装工程插件，能 check、能跑、能根据观察改位置/输入/颜色，直到对上。空工程烟测不够：还必须能打开官方样例工程（非自造方块），读回已有 hierarchy / tilemap / 输入，check，observe 玩家与敌人，再用输入改运行态位置。
+1. **官方样例能成环。** 验收工程是官方平台关（非自造方块）。Agent 只用 MCP / `defold_agent.py`，不装工程插件，能读回已有 hierarchy / tilemap / 输入，check，observe 玩家与敌人，再用输入改运行态位置。空工程方块只是产品故事，不是签字表。
 2. **观察以结构化快照为主。** 一次观察**始终**把完整 scene_graph 写成文件，MCP 回包默认只有：快照文件句柄、摘要（节点数 / 根 id / 类型直方图）、issues、目标是否还活着。完整树不进上下文。要某一节点或子树，用查询工具打文件。截屏是可选附件，不是 observe 的默认产物，也不是主环必做步骤。
 3. **作者态 ≠ 运行态。** `collection_get_hierarchy` / `gameobject_get_properties` 标明 `source: "editor" | "disk"`。运行时工具标明 `source: "runtime"`。同一 id 两边都能查，Agent 能对比。
 4. **编辑器可关。** 关着时走 bob + dmengine + 磁盘回退。开着时同一工具打编辑器图，创建可 Ctrl+Z。
@@ -407,7 +407,7 @@ CLI 拉起的 live 进程由 CLI 管死：`project_stop`、进程退出、工程
 - MCP：`runtime_observe`（batch，`inline=summary`）+ **`runtime_snapshot_query`**（`get_node` / `list_ids` / `find`）。
 - `runtime_get_hierarchy` / `runtime_get_properties` 读 `latest` 文件。
 - 发现：写/读 `.internal/agent/engine.json`。
-- 验收：空工程方块。observe 回包**没有**整棵树、**默认没有** PNG；`get_node` 能读出方块 `world_position`。整文件不得靠 `read_text` 进对话。截屏不参与这条验收。
+- 验收：官方平台关（空工程方块只是产品故事，不是签字表）。observe 回包**没有**整棵树、**默认没有** PNG；`get_node` 能读出玩家 `world_position`。整文件不得靠 `read_text` 进对话。截屏不参与这条验收。
 
 ### R1 — 活观察 + 工具质量
 

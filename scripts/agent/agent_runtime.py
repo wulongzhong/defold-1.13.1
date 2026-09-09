@@ -737,19 +737,101 @@ def _as_vec(value: Any) -> Optional[List[float]]:
             return [float(item) for item in value]
         except (TypeError, ValueError):
             return None
+    if isinstance(value, dict):
+        raw = value.get("value") if "value" in value and not any(key in value for key in ("x", "y", "z")) else value
+        if isinstance(raw, dict) and any(key in raw for key in ("x", "y", "z")):
+            try:
+                return [float(raw.get("x", 0)), float(raw.get("y", 0)), float(raw.get("z", 0))]
+            except (TypeError, ValueError):
+                return None
+        if isinstance(raw, (list, tuple)):
+            return _as_vec(list(raw))
     return None
 
 
-def compare_authoring(project: Path, record: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+def _add_vec(left: Any, right: Any) -> List[float]:
+    a = _as_vec(left) or [0.0, 0.0, 0.0]
+    b = _as_vec(right) or [0.0, 0.0, 0.0]
+    return [float(a[0] + b[0]), float(a[1] + b[1]), float(a[2] + b[2])]
+
+
+def _read_collection_text(project: Path, collection: str) -> Optional[str]:
+    try:
+        return (project / collection.lstrip("/")).read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def resolve_runtime_node(runtime_idx: Dict[str, Dict[str, Any]], go_id: str) -> Optional[Dict[str, Any]]:
+    wanted = normalize_node_id(go_id)
+    if go_id in runtime_idx:
+        return runtime_idx[go_id]
+    if wanted in runtime_idx:
+        return runtime_idx[wanted]
+    leaf = wanted.rsplit("/", 1)[-1]
+    matches = []
+    for key, node in runtime_idx.items():
+        ident = normalize_node_id(key)
+        if ident == wanted or ident.endswith("/" + leaf) or ident == leaf:
+            matches.append(node)
+    for node in matches:
+        if is_go_node(node):
+            return node
+    return matches[0] if matches else None
+
+
+def resolve_authoring_properties(project: Path, collection: str, go_id: str) -> Optional[Dict[str, Any]]:
     from agent_ops import parse_collection_hierarchy, parse_gameobject_properties, sanitize_proj_path
+
+    collection = sanitize_proj_path(collection)
+    text = _read_collection_text(project, collection)
+    if text is None:
+        return None
+    exact = parse_gameobject_properties(text, collection, go_id, project)
+    if exact is not None:
+        return exact
+    parts = [part for part in normalize_node_id(go_id).split("/") if part]
+    if not parts:
+        return None
+    current_collection = collection
+    current_text = text
+    composed = [0.0, 0.0, 0.0]
+    for index, part in enumerate(parts):
+        parsed = parse_gameobject_properties(current_text, current_collection, part, project)
+        if parsed is None:
+            break
+        position = (parsed.get("properties") or {}).get("position") or [0.0, 0.0, 0.0]
+        tree = parse_collection_hierarchy(current_text, current_collection)
+        node = next((item for item in (tree.get("children") or []) if str(item.get("id")) == part), None)
+        last = index == len(parts) - 1
+        if node and node.get("kind") == "collection_instance" and node.get("collection") and not last:
+            composed = _add_vec(composed, position)
+            current_collection = sanitize_proj_path(str(node.get("collection")))
+            current_text = _read_collection_text(project, current_collection)
+            if current_text is None:
+                return None
+            continue
+        if last:
+            result = dict(parsed)
+            props = dict(parsed.get("properties") or {})
+            props["position"] = _add_vec(composed, position)
+            result["properties"] = props
+            return result
+        break
+    return parse_gameobject_properties(text, collection, parts[-1], project) or parse_gameobject_properties(
+        current_text, current_collection, parts[-1], project
+    )
+
+
+def compare_authoring(project: Path, record: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    from agent_ops import parse_collection_hierarchy, sanitize_proj_path
 
     collection = params.get("collection") or params.get("path")
     if not collection:
         return error_envelope("MISSING_PARAM", "compare_authoring needs collection")
     collection = sanitize_proj_path(str(collection))
-    try:
-        text = (project / collection.lstrip("/")).read_text(encoding="utf-8")
-    except OSError:
+    text = _read_collection_text(project, collection)
+    if text is None:
         return error_envelope("NOT_FOUND", f"Collection not found: {collection}")
     graph = scene_graph_of(record)
     runtime_idx = index_nodes_by_id(graph)
@@ -766,8 +848,8 @@ def compare_authoring(project: Path, record: Dict[str, Any], params: Dict[str, A
     limit = min(int(params.get("limit") or PREVIEW_LIMIT), NODE_HARD_CAP)
     items: List[Dict[str, Any]] = []
     for go_id in ids[:limit]:
-        authoring = parse_gameobject_properties(text, collection, go_id, project)
-        runtime = runtime_idx.get(go_id)
+        authoring = resolve_authoring_properties(project, collection, go_id)
+        runtime = resolve_runtime_node(runtime_idx, go_id)
         deltas: List[Dict[str, Any]] = []
         if authoring is None:
             deltas.append({"property": "id", "authoring": None, "runtime": go_id if runtime else None})
