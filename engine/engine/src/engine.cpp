@@ -3273,6 +3273,31 @@ bail:
         }
     }
 
+    static void AgentCopyStem(const char* path, char* out, size_t cap)
+    {
+        if (!out || cap == 0)
+        {
+            return;
+        }
+        out[0] = 0;
+        if (!path)
+        {
+            return;
+        }
+        dmStrlCpy(out, path, cap);
+        size_t n = strlen(out);
+        const char* extras[] = { ".scriptc", ".script", ".luac", ".lua" };
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            size_t elen = strlen(extras[i]);
+            if (n > elen && strcmp(out + n - elen, extras[i]) == 0)
+            {
+                out[n - elen] = 0;
+                return;
+            }
+        }
+    }
+
     static bool AgentFileMatch(const char* source, const char* wanted)
     {
         if (!source || !wanted || !wanted[0])
@@ -3289,7 +3314,26 @@ bail:
         }
         size_t slen = strlen(source);
         size_t wlen = strlen(wanted);
-        return slen >= wlen && strcmp(source + slen - wlen, wanted) == 0;
+        if (slen >= wlen && strcmp(source + slen - wlen, wanted) == 0)
+        {
+            return true;
+        }
+        if (wlen >= slen && strcmp(wanted + wlen - slen, source) == 0)
+        {
+            return true;
+        }
+        char sstem[256];
+        char wstem[256];
+        AgentCopyStem(source, sstem, sizeof(sstem));
+        AgentCopyStem(wanted, wstem, sizeof(wstem));
+        if (strcmp(sstem, wstem) == 0)
+        {
+            return true;
+        }
+        slen = strlen(sstem);
+        wlen = strlen(wstem);
+        return (slen >= wlen && strcmp(sstem + slen - wlen, wstem) == 0)
+            || (wlen >= slen && strcmp(wstem + wlen - slen, sstem) == 0);
     }
 
     static void AgentLineHook(lua_State* L, lua_Debug* ar)

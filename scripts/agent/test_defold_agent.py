@@ -842,8 +842,16 @@ class ToolQualityTest(unittest.TestCase):
             self.assertIsNone(held_input_release_body({"keys": [{"key": "left", "mode": "up"}]}))
             _, bad_key = format_input_request({"keys": ["not-a-key"]})
             self.assertEqual("INVALID_PARAM", bad_key["error"]["code"])
+            _, long_hold = format_input_request({"keys": ["left"], "hold": 31})
+            self.assertEqual("INVALID_PARAM", long_hold["error"]["code"])
+            too_big = dispatch_command(project, "game_eval", {"code": "x" * 4097, "confirm": True}, 1)
+            self.assertEqual("INVALID_PARAM", too_big["error"]["code"])
             _, bp = format_debug_request({"op": "set_breakpoint"})
             self.assertEqual("MISSING_PARAM", bp["error"]["code"])
+            bp_body, bp_ok = format_debug_request({"op": "set_breakpoint", "file": "/main/player.script", "line": 9})
+            self.assertIsNone(bp_ok)
+            self.assertIn("file=main/player.script", bp_body)
+            self.assertIn("line=9", bp_body)
             stack_body, stack_err = format_debug_request({"op": "stack"})
             self.assertIsNone(stack_err)
             self.assertIn("op=stack", stack_body)
@@ -1332,6 +1340,24 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("EDITOR_NOT_READY", result["error"]["code"])
             self.assertEqual("building", result["error"]["data"]["sub_code"])
             self.assertFalse((project / "main" / "a.script").exists())
+            created = dispatch_command(project, "script_create", {"path": "/main/a.script"}, 2)
+            self.assertEqual("ok", created["status"])
+
+    def test_observing_handshake_blocks_writes(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            control = project / ".internal" / "agent" / "control"
+            control.mkdir(parents=True, exist_ok=True)
+            (control / "dump.request").write_text("observe\n", encoding="utf-8")
+            result = dispatch_command(project, "script_create", {"path": "/main/a.script"}, 2)
+            self.assertEqual("error", result["status"])
+            self.assertEqual("EDITOR_NOT_READY", result["error"]["code"])
+            self.assertEqual("observing", result["error"]["data"]["sub_code"])
+            self.assertFalse((project / "main" / "a.script").exists())
+            (control / "dump.request").unlink()
             created = dispatch_command(project, "script_create", {"path": "/main/a.script"}, 2)
             self.assertEqual("ok", created["status"])
 

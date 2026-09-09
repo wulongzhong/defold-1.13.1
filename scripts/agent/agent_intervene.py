@@ -222,7 +222,10 @@ def format_debug_request(params: Dict[str, Any]) -> Tuple[str, Optional[Dict[str
         return "", error_envelope("UNKNOWN_OP", f"Unknown op: {op}", suggestions=list(DEBUG_OPS))
     lines = [f"op={op}"]
     if params.get("file"):
-        lines.append(f"file={params['file']}")
+        path = str(params["file"]).replace("\\", "/")
+        if path.startswith("/"):
+            path = path[1:]
+        lines.append(f"file={path}")
     if params.get("line") is not None:
         lines.append(f"line={int(params['line'])}")
     if op == "set_breakpoint" and (not params.get("file") or not params.get("line")):
