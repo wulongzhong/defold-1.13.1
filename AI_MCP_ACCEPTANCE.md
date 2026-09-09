@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P7** 已在打包编辑器上按 ID 实跑。P7 覆盖默认回包上限、`truncated` 必须带 hint、快照目录内 dest、以及查询的 `UNKNOWN_OP` / `MISSING_PARAM`。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P8** 已在打包编辑器上按 ID 实跑。P8 覆盖查询缺参、`has_property` / `type` 过滤、快照 list 上限、stop 后 `no_runtime`、以及按 CLI live 钉 session。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P7 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P8 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P7 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P7** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P8** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -121,6 +121,7 @@ P1–P7 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。
 | L0-12 | P3 | §9、L0 | 只写 `dump.request`（无 `dump.ready`）后 `script_create` | `status=error`，`EDITOR_NOT_READY`，`sub_code=observing`。测完删 request |
 | L0-13 | P6 | §9 | live 之后再 `editor_state` | 信封 `readiness=running` |
 | L0-14 | P7 | §9 | `project_stop` 之后再 `editor_state` | 信封 `readiness` 不是 `running` |
+| L0-15 | P8 | §9 | `project_stop` 之后再 `runtime_state` | 信封 `readiness=no_runtime` |
 
 ### 5.1 L1 作者态
 
@@ -234,6 +235,11 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L4-33 | P7 | §7.8 | 对一份 ≥257 节点的快照 `get_subtree` `limit=256` | `status=ok`；`truncated` 为 true；`hint` 非空 |
 | L4-34 | P7 | §10 | `runtime_snapshot_query` 假 op | `UNKNOWN_OP` |
 | L4-35 | P7 | §10 | `get_subtree` 不传 id | `MISSING_PARAM` |
+| L4-36 | P8 | §10 | `get_node` 不传 id | `MISSING_PARAM` |
+| L4-37 | P8 | §10 | `compare_authoring` 不传 collection | `MISSING_PARAM` |
+| L4-38 | P8 | §7.8 | `runtime_snapshot_query op=list` | `snapshots` 长度 ≤ 8 |
+| L4-39 | P8 | §7.8 | `find has_property=world_position` | matches 非空 |
+| L4-40 | P8 | §7.8 | `list_ids type=goc` | ids 含 player |
 
 ### 5.5 L5 干预
 
@@ -261,6 +267,7 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L5-18 | P5 | §7.5、§8.1 | `session_activate` 指向其它工程的 editor | `NOT_ALLOWED` |
 | L5-19 | P5 | §11 R3 | L5-12 命中后再 `runtime_debug op=status` | `frames` 非空；`stack_reason=breakpoint`；`prompt` 不为 true |
 | L5-20 | P6 | §7.5、§8.1 | `session_activate` 用本工程 editor 的 url | `status=ok` |
+| L5-21 | P8 | §7.5、§8.1 | live 时 `session_activate` `id=cli-live` | `status=ok`；`session.kind=cli-live` |
 
 L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功仍要验 PNG。
 
@@ -310,7 +317,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `editor_state` | L0 | L0-01；P2：L0-09；P6：L0-13；P7：L0-14 | title / root / commands；live 后 running；stop 后不是 running |
 | `project_doctor` | L0 | L0-02、ENV-04 | ready / mcp / java_required |
 | `session_manage` | L0 | L0-03 | 含本工程 editor |
-| `session_activate` | L0 | L0-03；P2：L5-10；P5：L5-18；P6：L5-20 | ok；假 id 为 UNKNOWN_TARGET；其它工程 NOT_ALLOWED；可按 url 钉 |
+| `session_activate` | L0 | L0-03；P2：L5-10；P5：L5-18；P6：L5-20；P8：L5-21 | ok；假 id 为 UNKNOWN_TARGET；其它工程 NOT_ALLOWED；可按 url / cli-live 钉 |
 | `api_manage` | L0 | L0-04；P3：L3-06 | 文档命中；关编辑器走引擎 `/*#` |
 | `editor_manage` | L0 | L0-05、ENV-09 | mcp_config 无 URL。**不验 `quit`**（会杀掉验收进程） |
 | `collection_open` | L1 | L1-01 | ok |
@@ -336,9 +343,9 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `project_manage` | L2/L6 | L6-24、L6-25；P1：L2-08 | settings 读回。`stop` 与 `project_stop` 对齐即可 |
 | `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump |
 | `project_stop` | L3 | L3-04、L5-08 | 进程死 |
-| `runtime_state` | L4 | L4-03 | alive |
+| `runtime_state` | L4 | L4-03；P8：L0-15 | alive；stop 后 no_runtime |
 | `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24；P6：L4-27；P7：L2-14、L4-30 | 句柄 + 摘要；无 live 拒绝；快照只留 8；dest 不轮转；logs.lines ≤ 40 |
-| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23；P6：L4-25、L4-26、L4-28；P7：L4-31–L4-35 | get_node 是 GO；分页；默认 limit；truncate=false 超上限；超 256 带 hint；假 op / 缺 id |
+| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23；P6：L4-25、L4-26、L4-28；P7：L4-31–L4-35；P8：L4-36–L4-40 | get_node 是 GO；分页；默认 limit；truncate=false 超上限；超 256 带 hint；假 op / 缺 id；has_property / type；list ≤ 8 |
 | `runtime_get_hierarchy` | L4 | L4-04；P3：L4-18；P6：L4-29 | source=runtime；分页 truncated；默认 limit 200 |
 | `runtime_get_properties` | L4 | L4-05 | source=runtime |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
@@ -394,6 +401,7 @@ SKIP  L5-07  optional screenshot
   "p5_failed": [],
   "p6_failed": [],
   "p7_failed": [],
+  "p8_failed": [],
   "p1_skipped": []
 }
 ```

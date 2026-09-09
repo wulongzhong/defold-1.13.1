@@ -736,13 +736,9 @@ def _as_vec(value: Any) -> Optional[List[float]]:
 
 
 def compare_authoring(project: Path, record: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    from agent_ops import parse_collection_hierarchy, parse_gameobject_properties, parse_game_project, sanitize_proj_path
+    from agent_ops import parse_collection_hierarchy, parse_gameobject_properties, sanitize_proj_path
 
     collection = params.get("collection") or params.get("path")
-    if not collection:
-        game_project = project / "game.project"
-        if game_project.is_file():
-            collection = parse_game_project(game_project.read_text(encoding="utf-8")).get("bootstrap.main_collection")
     if not collection:
         return error_envelope("MISSING_PARAM", "compare_authoring needs collection")
     collection = sanitize_proj_path(str(collection))
