@@ -653,7 +653,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from agent_debug import write_last_check
+        from agent_debug import last_check_path, write_last_check
 
         with tempfile.TemporaryDirectory() as tmp:
             project, _record = self._project_with_snapshot(tmp)
@@ -688,8 +688,12 @@ class RuntimeSnapshotTest(unittest.TestCase):
                 "ERROR:SCRIPT: /main/a.script:4: nil\n",
                 encoding="utf-8",
             )
+            check_file = last_check_path(project)
+            before_mtime = check_file.stat().st_mtime_ns
             diag = dispatch_command(project, "diagnostics_read", {}, 2)
             self.assertEqual("ok", diag["status"])
+            self.assertEqual("diagnostics", diag["data"]["source"])
+            self.assertEqual(before_mtime, check_file.stat().st_mtime_ns)
             self.assertGreaterEqual(diag["data"]["counts"]["error"], 1)
             self.assertTrue(any(issue.get("resource") == "/main/a.script" for issue in diag["data"]["issues"]))
             blocked = dispatch_command(project, "project_manage", {"op": "hot_reload"}, 1)
@@ -943,6 +947,10 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("ENGINE_NOT_RUNNING", debug_missing["error"]["code"])
             unknown = dispatch_command(project, "runtime_debug", {"op": "repl"}, 1)
             self.assertEqual("UNKNOWN_OP", unknown["error"]["code"])
+            empty_input = dispatch_command(project, "runtime_input", {}, 1)
+            self.assertEqual("MISSING_PARAM", empty_input["error"]["code"])
+            missing_eval = dispatch_command(project, "game_eval", {"confirm": True}, 1)
+            self.assertEqual("MISSING_PARAM", missing_eval["error"]["code"])
             body, error = format_input_request({"keys": ["left", "space"], "hold": 4})
             self.assertIsNone(error)
             self.assertIn("key=left", body)
@@ -1739,6 +1747,14 @@ class ToolQualityTest(unittest.TestCase):
                 2,
             )
             self.assertEqual("NOT_ALLOWED", blocked["error"]["code"])
+            escaped = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "exists", "path": "/main/../game.project"},
+                2,
+            )
+            self.assertEqual("error", escaped["status"])
+            self.assertEqual("INVALID_PARAM", escaped["error"]["code"])
             created = dispatch_command(
                 project,
                 "gameobject_create",

@@ -83,6 +83,17 @@ def sanitize_proj_path(path: str) -> str:
     return "/" + "/".join(parts)
 
 
+def reject_escaped_project_path(params: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for key in ("path", "dest", "collection"):
+        raw = (params or {}).get(key)
+        if not isinstance(raw, str) or not raw:
+            continue
+        parts = [part for part in raw.replace("\\", "/").split("/") if part]
+        if any(part in {".", ".."} for part in parts):
+            return error_envelope("INVALID_PARAM", "Path must stay inside the project")
+    return None
+
+
 def project_file(project: Path, proj_path: str) -> Path:
     return project / sanitize_proj_path(proj_path).lstrip("/")
 
@@ -2108,6 +2119,9 @@ def dispatch_command(
     timeout: float,
 ) -> Dict[str, Any]:
     command, params = apply_alias(command, params or {})
+    blocked = reject_escaped_project_path(params)
+    if blocked is not None:
+        return blocked
     blocked = reject_write_if_gated(project, command, params)
     if blocked is not None:
         return blocked

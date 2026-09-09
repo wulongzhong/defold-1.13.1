@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P12** 已在打包编辑器上按 ID 实跑。P12 覆盖非法日志 source、`get_properties` 默认 latest、以及 `get_subtree` 默认 depth。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P13** 已在打包编辑器上按 ID 实跑。P13 覆盖工程路径逃逸、`diagnostics_read` 不重编、以及干预缺参 / 假 op。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P12 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P13 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P12 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P12** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P13** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -160,6 +160,7 @@ P1–P12 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L1-29 | P6 | §10 | `gameobject_manage` 假 op | `UNKNOWN_OP` |
 | L1-30 | P6 | §10 | `gameobject_get_properties` 不传 id | `MISSING_PARAM` |
 | L1-31 | P10 | §10 | `filesystem_manage` 假 op | `UNKNOWN_OP` |
+| L1-32 | P13 | §8.4 | `filesystem_manage exists` `path=/main/../game.project` | `INVALID_PARAM` |
 
 ### 5.2 L2 编译诊断
 
@@ -181,6 +182,7 @@ P1–P12 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L2-14 | P7 | §7.4 | 默认 `runtime_observe` 回包 | `logs.lines` 长度 ≤ 40 |
 | L2-15 | P11 | §7.3 | `logs_read` 不传 source | `status=ok`；`lines` 是列表；`sources` 是列表 |
 | L2-16 | P12 | §7.3、§10 | `logs_read source=explode` | `INVALID_PARAM` |
+| L2-17 | P13 | §7.3 | `diagnostics_read` | `status=ok`；`source=diagnostics`；不写 `last_check.json`（mtime 不变） |
 
 ### 5.3 L3 生命周期
 
@@ -285,6 +287,10 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L5-19 | P5 | §11 R3 | L5-12 命中后再 `runtime_debug op=status` | `frames` 非空；`stack_reason=breakpoint`；`prompt` 不为 true |
 | L5-20 | P6 | §7.5、§8.1 | `session_activate` 用本工程 editor 的 url | `status=ok` |
 | L5-21 | P8 | §7.5、§8.1 | live 时 `session_activate` `id=cli-live` | `status=ok`；`session.kind=cli-live` |
+| L5-22 | P13 | §10、§11 R3 | `runtime_debug op=explode` | `UNKNOWN_OP` |
+| L5-23 | P13 | §10、§11 R3 | `runtime_debug op=set_breakpoint` 不传 file | `MISSING_PARAM` |
+| L5-24 | P13 | §10、§11 R3 | `runtime_input` 不传 key | `MISSING_PARAM` |
+| L5-25 | P13 | §10、§11 R3 | `game_eval confirm=true` 不传 code | `MISSING_PARAM` |
 
 L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功仍要验 PNG。
 
@@ -351,12 +357,12 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `script_attach` | L1 | L1-06、L1-07 | components |
 | `script_patch` | L1 | L1-08、L2-05 | 文本变化 |
 | `script_manage` | L1 | L1-08；P1：L1-20 | read 文本 |
-| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP |
+| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` 为 INVALID_PARAM |
 | `batch_execute` | L1 | L1-15；P2：L1-28 | rolled_back；混 check 时 atomic=false |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
 | `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13；P11：L2-15；P12：L2-16 | lines 或 issues；分页；severity/prints；editor-file；domain；q；默认 source；假 source 为 INVALID_PARAM |
-| `diagnostics_read` | L2 | L2-04 | issues 列表 |
+| `diagnostics_read` | L2 | L2-04；P13：L2-17 | issues 列表；不重编；不写 last_check |
 | `editor_preview` | L2 | L2-07 | PNG 魔数 |
 | `project_manage` | L2/L6 | L6-24、L6-25；P1：L2-08 | settings 读回。`stop` 与 `project_stop` 对齐即可 |
 | `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22；P11：L3-10 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump；假 mode |
@@ -368,9 +374,9 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `runtime_get_properties` | L4 | L4-05；P11：L4-51；P12：L4-52 | source=runtime；缺 id 为 MISSING_PARAM；默认读 latest |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
 | `runtime_screenshot` | L5 | L5-07 | 可选 PNG |
-| `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17 | player x 变小；无 live 拒绝；hold / 事件上限 |
-| `game_eval` | L5 | L5-01、L5-02、L5-05；P3：L5-14 | 无 confirm 拒绝；go.* 返回向量；超 4096 字节拒绝 |
-| `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19 | 不进 `debug>`；命中后 frames；status 仍带上次栈 |
+| `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17；P13：L5-24 | player x 变小；无 live 拒绝；hold / 事件上限；缺 key 为 MISSING_PARAM |
+| `game_eval` | L5 | L5-01、L5-02、L5-05；P3：L5-14；P13：L5-25 | 无 confirm 拒绝；go.* 返回向量；超 4096 字节拒绝；缺 code 为 MISSING_PARAM |
+| `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19；P13：L5-22、L5-23 | 不进 `debug>`；命中后 frames；status 仍带上次栈；假 op / 缺 file |
 | `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22；P10：L6-27 | 文件 + get + list；假 op 为 UNKNOWN_OP |
 | `camera_manage` | L6 | L6-23 | cube 上有 camera |
 | `tilemap_manage` / `gui_manage` / `input_binding_manage` | L6 | L6-03–L6-05 | 读回 tile / text / jump |
@@ -424,6 +430,7 @@ SKIP  L5-07  optional screenshot
   "p10_failed": [],
   "p11_failed": [],
   "p12_failed": [],
+  "p13_failed": [],
   "p1_skipped": []
 }
 ```
