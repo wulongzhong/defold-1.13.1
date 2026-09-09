@@ -491,6 +491,29 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("ENGINE_UNREACHABLE", reused["error"]["code"])
             self.assertNotEqual("check failed before project_run", reused["error"]["message"])
 
+    def test_batch_observe_ignores_stale_raw_dump(self):
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from defold_agent import observe_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            raw = project / ".internal" / "agent" / "snapshots" / "_raw.json"
+            raw.parent.mkdir(parents=True, exist_ok=True)
+            raw.write_text('{"id":"stale","type":"collectionc","children":[]}', encoding="utf-8")
+            decoy = shutil.which("where") or shutil.which("where.exe")
+            self.assertTrue(decoy)
+            result = observe_runtime(
+                project,
+                {"mode": "batch", "frames": 1, "no_build": True, "engine": decoy},
+                2,
+            )
+            self.assertEqual("error", result["status"])
+            self.assertEqual("RUNTIME_DUMP_MISSING", result["error"]["code"])
+            self.assertFalse(raw.is_file())
+
     def test_stop_marks_missing_pid_stopped(self):
         import os
         import tempfile

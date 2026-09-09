@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**、**P2**、**P3**、**P4** 已在打包编辑器上按 ID 实跑。P4 覆盖 `get_path` 超预算、输入事件上限、batch run、`list_ids` 分页、日志 `domain`。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P5** 已在打包编辑器上按 ID 实跑。P5 覆盖找不到引擎、dump 没写成、快照只留 8 份、跨工程 session、运行时 `NOT_FOUND`、命中后 `status` 仍带 frames。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1、P2、P3、P4 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P5 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1、P2、P3、P4 必须实跑；漏跑 = 失败。禁止把没跑的条目标�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1** / **P2** / **P3** / **P4** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P5** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -171,6 +171,7 @@ P1、P2、P3、P4 必须实跑；漏跑 = 失败。禁止把没跑的条目标�
 | L2-10 | P3 | §7.3 | `logs_read` `source=all` `severity=error` | 回包有 `issues` 与 `prints` 列表（可空）；`severity` 为 `error` |
 | L2-11 | P3 | §7.3 | `logs_read` `source=editor-file` | `status=ok`；`source` 为 `editor-file`（或 `sources` 含它）；`lines` 是列表（可空） |
 | L2-12 | P4 | §7.3 | `logs_read` `source=all` `domain=ENGINE` | `status=ok`；`domain` 为 `ENGINE`；`lines` 是列表（可空） |
+| L2-13 | P5 | §7.3 | `logs_read` `source=all` `q=ENGINE` | `status=ok`；`q` 为 `ENGINE`；`lines` 是列表（可空） |
 
 ### 5.3 L3 生命周期
 
@@ -183,6 +184,7 @@ P1、P2、P3、P4 必须实跑；漏跑 = 失败。禁止把没跑的条目标�
 | L3-05 | P1 | §3.4、§15.3 | 关编辑器后 `project_run mode=live` | 仍能 observe；关编辑器时的磁盘写 `source=disk` 且 `undoable:false` |
 | L3-06 | P3 | §8.3、§3.4 | 关编辑器时 `api_manage op=get q=go.set_position` | 结果提到 `set_position`（引擎 `/*#` / `engine-docs`） |
 | L3-07 | P4 | §7.2、§9 | `project_stop` 之后 `project_run mode=batch` `frames=5` | `status=ok`；随后 CLI live `alive` 不是 true |
+| L3-08 | P5 | §10 | `project_run` 指向不存在的 `engine` | `ENGINE_UNREACHABLE` |
 
 L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默两个 dmengine。
 
@@ -212,6 +214,10 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L4-18 | P3 | §7.3、§8.4 | `runtime_get_hierarchy` `offset=0` `limit=1` | 回包有 `offset`/`limit`；`truncated` 是 bool；`source=runtime` |
 | L4-19 | P4 | §7.8、§10 | 对一份注入超预算 padding 的快照 `get_path` `/padding` | `INLINE_TOO_LARGE`；原快照文件仍在 |
 | L4-20 | P4 | §7.8、§8.4 | `runtime_snapshot_query op=list_ids` `offset=0` `limit=1` | 回包有 `offset`/`limit`；`truncated` 是 bool |
+| L4-21 | P5 | §9、§10 | 无 live 时 `runtime_observe mode=live` | `ENGINE_NOT_RUNNING`。已有快照仍可用 `runtime_snapshot_query` |
+| L4-22 | P5 | §10 | `project_run mode=batch` `no_build=true`，`engine` 是会立刻退出、不写 dump 的可执行文件 | `RUNTIME_DUMP_MISSING` |
+| L4-23 | P5 | §10 | `runtime_snapshot_query get_node` 假 id | `NOT_FOUND` |
+| L4-24 | P5 | §7.8 | 快照目录先多写再 observe | `*.json` 除去 `latest.json` 与 `_raw.json` 不超过 8 个 |
 
 ### 5.5 L5 干预
 
@@ -236,6 +242,8 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L5-15 | P3 | §11 R3 | `runtime_input` `hold=31` | `INVALID_PARAM` |
 | L5-16 | P3 | §11 R3 | live 时 `runtime_debug op=step` | `status=ok`；`prompt` 不为 true |
 | L5-17 | P4 | §11 R3 | `runtime_input` 17 个 key | `INVALID_PARAM` |
+| L5-18 | P5 | §7.5、§8.1 | `session_activate` 指向其它工程的 editor | `NOT_ALLOWED` |
+| L5-19 | P5 | §11 R3 | L5-12 命中后再 `runtime_debug op=status` | `frames` 非空；`stack_reason=breakpoint`；`prompt` 不为 true |
 
 L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功仍要验 PNG。
 
@@ -285,7 +293,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `editor_state` | L0 | L0-01；P2：L0-09 | title / root / commands；live 后 engine.alive |
 | `project_doctor` | L0 | L0-02、ENV-04 | ready / mcp / java_required |
 | `session_manage` | L0 | L0-03 | 含本工程 editor |
-| `session_activate` | L0 | L0-03；P2：L5-10 | ok；假 id 为 UNKNOWN_TARGET |
+| `session_activate` | L0 | L0-03；P2：L5-10；P5：L5-18 | ok；假 id 为 UNKNOWN_TARGET；其它工程 NOT_ALLOWED |
 | `api_manage` | L0 | L0-04；P3：L3-06 | 文档命中；关编辑器走引擎 `/*#` |
 | `editor_manage` | L0 | L0-05、ENV-09 | mcp_config 无 URL。**不验 `quit`**（会杀掉验收进程） |
 | `collection_open` | L1 | L1-01 | ok |
@@ -305,22 +313,22 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `batch_execute` | L1 | L1-15；P2：L1-28 | rolled_back；混 check 时 atomic=false |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
-| `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12 | lines 或 issues；分页；severity/prints；editor-file；domain |
+| `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13 | lines 或 issues；分页；severity/prints；editor-file；domain；q |
 | `diagnostics_read` | L2 | L2-04 | issues 列表 |
 | `editor_preview` | L2 | L2-07 | PNG 魔数 |
 | `project_manage` | L2/L6 | L6-24、L6-25；P1：L2-08 | settings 读回。`stop` 与 `project_stop` 对齐即可 |
-| `project_run` | L3 | L3-01、L3-03；P4：L3-07 | 一个 live；batch 跑完不留 live |
+| `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump |
 | `project_stop` | L3 | L3-04、L5-08 | 进程死 |
 | `runtime_state` | L4 | L4-03 | alive |
-| `runtime_observe` | L4 | L4-01、L4-02 | 句柄 + 摘要，无整树，无默认截屏 |
-| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20 | get_node 是 GO；假 id；get_path 超预算；list_ids 分页 |
+| `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24 | 句柄 + 摘要；无 live 拒绝；快照只留 8 |
+| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23 | get_node 是 GO；假 snapshot / 假节点；get_path 超预算；list_ids 分页 |
 | `runtime_get_hierarchy` | L4 | L4-04；P3：L4-18 | source=runtime；分页 truncated |
 | `runtime_get_properties` | L4 | L4-05 | source=runtime |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
 | `runtime_screenshot` | L5 | L5-07 | 可选 PNG |
 | `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17 | player x 变小；无 live 拒绝；hold / 事件上限 |
 | `game_eval` | L5 | L5-01、L5-02、L5-05；P3：L5-14 | 无 confirm 拒绝；go.* 返回向量；超 4096 字节拒绝 |
-| `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16 | 不进 `debug>`；命中后 frames；clear / step |
+| `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19 | 不进 `debug>`；命中后 frames；status 仍带上次栈 |
 | `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22 | 文件 + get + list |
 | `camera_manage` | L6 | L6-23 | cube 上有 camera |
 | `tilemap_manage` / `gui_manage` / `input_binding_manage` | L6 | L6-03–L6-05 | 读回 tile / text / jump |
@@ -366,6 +374,7 @@ SKIP  L5-07  optional screenshot
   "p2_failed": [],
   "p3_failed": [],
   "p4_failed": [],
+  "p5_failed": [],
   "p1_skipped": []
 }
 ```

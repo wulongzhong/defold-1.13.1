@@ -682,6 +682,8 @@ def observe_runtime(project: Path, params: Dict[str, Any], timeout: float) -> Di
     if not engine:
         return error_envelope("ENGINE_UNREACHABLE", "dmengine not found. Set DEFOLD_ENGINE or pass --engine.")
     raw = project / ".internal" / "agent" / "snapshots" / "_raw.json"
+    if raw.is_file():
+        raw.unlink()
     shot = None
     if want_shot:
         dest = params.get("dest")

@@ -1,6 +1,6 @@
 # Copyright 2020-2026 The Defold Foundation
 # Licensed under the Defold License version 1.0 (the "License")
-"""Case IDs from AI_MCP_ACCEPTANCE.md. The runner must execute every P0, P1, P2, P3, and P4 id."""
+"""Case IDs from AI_MCP_ACCEPTANCE.md. The runner must execute every P0 through P5 id."""
 
 from __future__ import annotations
 
@@ -145,6 +145,17 @@ P4_IDS = (
     "L4-19",
     "L4-20",
     "L5-17",
+)
+
+P5_IDS = (
+    "L2-13",
+    "L3-08",
+    "L4-21",
+    "L4-22",
+    "L4-23",
+    "L4-24",
+    "L5-18",
+    "L5-19",
 )
 
 SPEC_PATH = "AI_MCP_ACCEPTANCE.md"
