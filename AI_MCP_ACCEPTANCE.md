@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P35** 已在打包编辑器上按 ID 实跑。**P36** 是需求里已写、合同还没编号的 gamepads / display_profiles / model create 缺 path。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P36** 已在打包编辑器上按 ID 实跑。**P37** 是需求里已写、合同还没编号的 factory / collectionfactory / collectionproxy create 缺 path。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P36 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P37 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P36 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P35** = 已在打包编辑器上跑过。**P36** = 本轮按需求补的编号；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P36** = 已在打包编辑器上跑过。**P37** = 本轮按需求补的编号；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -391,6 +391,9 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | L6-51 | P36 | §8.3、§10 | `gamepads_manage create` 不传 path | `MISSING_PARAM` |
 | L6-52 | P36 | §8.3、§10 | `display_profiles_manage create` 不传 path | `MISSING_PARAM` |
 | L6-53 | P36 | §8.3、§10 | `model_manage create` 不传 path | `MISSING_PARAM` |
+| L6-54 | P37 | §8.3、§10 | `factory_manage create` 不传 path | `MISSING_PARAM` |
+| L6-55 | P37 | §8.3、§10 | `collectionfactory_manage create` 不传 path | `MISSING_PARAM` |
+| L6-56 | P37 | §8.3、§10 | `collectionproxy_manage create` 不传 path | `MISSING_PARAM` |
 
 关着编辑器时这些写必须 `undoable: false` 且 `source: disk`（P1，需求 §5 L6）。
 
@@ -441,7 +444,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17；P13：L5-24；P14：L5-26 | player x 变小；无 live 拒绝；hold / 事件上限；缺 key / 假 key |
 | `game_eval` | L5 | L5-01、L5-02、L5-05；P3：L5-14；P13：L5-25 | 无 confirm 拒绝；go.* 返回向量；超 4096 字节拒绝；缺 code 为 MISSING_PARAM |
 | `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19；P13：L5-22、L5-23；P14：L5-27 | 不进 `debug>`；命中后 frames；status 仍带上次栈；假 op / 缺 file / 缺 line |
-| `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22；P10：L6-27；P29：L6-30；P30：L6-33；P31：L6-38；P34：L6-46、L6-47；P35：L6-48–L6-50；P36：L6-51–L6-53 | 文件 + get + list；假 op 为 UNKNOWN_OP；缺 property / id / path 为 MISSING_PARAM |
+| `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22；P10：L6-27；P29：L6-30；P30：L6-33；P31：L6-38；P34：L6-46、L6-47；P35：L6-48–L6-50；P36：L6-51–L6-53；P37：L6-54–L6-56 | 文件 + get + list；假 op 为 UNKNOWN_OP；缺 property / id / path 为 MISSING_PARAM |
 | `camera_manage` | L6 | L6-23；P31：L6-36、L6-37；P32：L6-41 | cube 上有 camera；缺 path / collection+id / op 为 MISSING_PARAM |
 | `tilemap_manage` / `gui_manage` / `input_binding_manage` | L6 | L6-03–L6-05；P29：L6-31、L6-32；P30：L6-34、L6-35；P32：L6-39、L6-40；P33：L6-42–L6-44；P34：L6-45 | 读回 tile / text / jump；缺 property / tile / id / x,y / path / action / input 为 MISSING_PARAM |
 
@@ -518,6 +521,7 @@ SKIP  L5-07  optional screenshot
   "p34_failed": [],
   "p35_failed": [],
   "p36_failed": [],
+  "p37_failed": [],
   "p1_skipped": []
 }
 ```
