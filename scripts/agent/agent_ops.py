@@ -88,9 +88,16 @@ def reject_escaped_project_path(params: Optional[Dict[str, Any]]) -> Optional[Di
         raw = (params or {}).get(key)
         if not isinstance(raw, str) or not raw:
             continue
-        parts = [part for part in raw.replace("\\", "/").split("/") if part]
+        text = raw.replace("\\", "/")
+        if len(text) > 2 and text[1] == ":":
+            continue
+        if text.startswith("//"):
+            continue
+        parts = [part for part in text.split("/") if part]
         if any(part in {".", ".."} for part in parts):
             return error_envelope("INVALID_PARAM", "Path must stay inside the project")
+        if key != "dest" and not text.startswith("/"):
+            return error_envelope("INVALID_PARAM", "Project paths must start with /")
     return None
 
 

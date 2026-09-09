@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P15** 已在打包编辑器上按 ID 实跑。P15 覆盖 search / settings 缺参。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P16** 已在打包编辑器上按 ID 实跑。P16 覆盖工程路径必须以 `/` 开头。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P15 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P16 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P15 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P15** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P16** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -162,6 +162,7 @@ P1–P15 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L1-31 | P10 | §10 | `filesystem_manage` 假 op | `UNKNOWN_OP` |
 | L1-32 | P13 | §8.4 | `filesystem_manage exists` `path=/main/../game.project` | `INVALID_PARAM` |
 | L1-34 | P15 | §8.3、§10 | `filesystem_manage search` 不传 query | `MISSING_PARAM` |
+| L1-33 | P16 | §8.4 | `filesystem_manage exists` `path=main/player.script`（无前导 `/`） | `INVALID_PARAM` |
 
 ### 5.2 L2 编译诊断
 
@@ -363,7 +364,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `script_attach` | L1 | L1-06、L1-07 | components |
 | `script_patch` | L1 | L1-08、L2-05 | 文本变化 |
 | `script_manage` | L1 | L1-08；P1：L1-20 | read 文本 |
-| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32；P15：L1-34 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` 为 INVALID_PARAM；缺 query 为 MISSING_PARAM |
+| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32；P15：L1-34；P16：L1-33 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` / 无前导 `/` 为 INVALID_PARAM；缺 query 为 MISSING_PARAM |
 | `batch_execute` | L1 | L1-15；P2：L1-28 | rolled_back；混 check 时 atomic=false |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
@@ -439,6 +440,7 @@ SKIP  L5-07  optional screenshot
   "p13_failed": [],
   "p14_failed": [],
   "p15_failed": [],
+  "p16_failed": [],
   "p1_skipped": []
 }
 ```

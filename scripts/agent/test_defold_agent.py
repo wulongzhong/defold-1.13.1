@@ -1763,6 +1763,13 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual("error", escaped["status"])
             self.assertEqual("INVALID_PARAM", escaped["error"]["code"])
+            no_slash = dispatch_command(
+                project,
+                "filesystem_manage",
+                {"op": "exists", "path": "main/player.script"},
+                2,
+            )
+            self.assertEqual("INVALID_PARAM", no_slash["error"]["code"])
             created = dispatch_command(
                 project,
                 "gameobject_create",
