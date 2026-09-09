@@ -844,6 +844,8 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("INVALID_PARAM", bad_key["error"]["code"])
             _, long_hold = format_input_request({"keys": ["left"], "hold": 31})
             self.assertEqual("INVALID_PARAM", long_hold["error"]["code"])
+            _, too_many = format_input_request({"keys": ["left"] * 17})
+            self.assertEqual("INVALID_PARAM", too_many["error"]["code"])
             too_big = dispatch_command(project, "game_eval", {"code": "x" * 4097, "confirm": True}, 1)
             self.assertEqual("INVALID_PARAM", too_big["error"]["code"])
             _, bp = format_debug_request({"op": "set_breakpoint"})
