@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P20** 已在打包编辑器上按 ID 实跑。P20 覆盖 collection / script 缺 path。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P21** 已在打包编辑器上按 ID 实跑。P21 覆盖 collection_save / batch / preview 缺参。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P20 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P21 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P20 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P20** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P21** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -173,6 +173,8 @@ P1–P20 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L1-40 | P20 | §8.3、§10 | `collection_open` 不传 path | `MISSING_PARAM` |
 | L1-41 | P20 | §8.2、§10 | `script_create` 不传 path | `MISSING_PARAM` |
 | L1-42 | P20 | §8.2、§10 | `script_manage read` 不传 path | `MISSING_PARAM` |
+| L1-43 | P21 | §8.3、§10 | `collection_save` 不传 path | `MISSING_PARAM` |
+| L1-44 | P21 | §8.4、§10 | `batch_execute` 不传 commands | `MISSING_PARAM` |
 
 ### 5.2 L2 编译诊断
 
@@ -185,6 +187,7 @@ P1–P20 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L2-05 | P0 | §3、§10 | 把 cube.script 改成非法 Lua，再 `project_check` | `status=error`。`issues` 里有 `/main/cube.script`，且有 `line` 或 `range.start` |
 | L2-06 | P0 | §8.2 | 恢复脚本再 check | `status=ok` |
 | L2-07 | P0 | §7.3 | `editor_preview` collection，写 PNG | 文件存在；头 8 字节是 PNG 魔数；`source=editor-preview` |
+| L2-19 | P21 | §7.3、§10 | `editor_preview` 不传 path | `MISSING_PARAM` |
 | L2-08 | P1 | §8.2 | `project_manage op=hot_reload` | 编辑器开着时 `source=editor` |
 | L2-09 | P2 | §8.4 | `logs_read` `limit=2` `offset=0` | 回包有 `offset`/`limit`；`truncated` 是 bool |
 | L2-10 | P3 | §7.3 | `logs_read` `source=all` `severity=error` | 回包有 `issues` 与 `prints` 列表（可空）；`severity` 为 `error` |
@@ -363,7 +366,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `editor_manage` | L0 | L0-05、ENV-09；P17：L0-17 | mcp_config 无 URL，含 `tool_timeout_sec`。**不验 `quit`**（会杀掉验收进程） |
 | `collection_open` | L1 | L1-01；P20：L1-40 | ok；缺 path 为 MISSING_PARAM |
 | `collection_get_hierarchy` | L1 | L1-01、L1-02、L1-16；P2：L1-25 | source + ids；分页 truncated |
-| `collection_save` | L1 | L1-13 | 磁盘含 id |
+| `collection_save` | L1 | L1-13；P21：L1-43 | 磁盘含 id；缺 path 为 MISSING_PARAM |
 | `collection_manage` | L1 | L1-10、L1-11、L1-12；P2：L1-27 | create / remove / get_roots / add_instance |
 | `gameobject_create` | L1 | L1-02、L1-07 | hierarchy + position |
 | `gameobject_get_properties` | L1 | L1-02、L1-03、L1-16；P6：L1-30 | source + position / components；缺 id 为 MISSING_PARAM |
@@ -375,12 +378,12 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `script_patch` | L1 | L1-08、L2-05 | 文本变化 |
 | `script_manage` | L1 | L1-08；P1：L1-20；P20：L1-42 | read 文本；缺 path 为 MISSING_PARAM |
 | `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31；P13：L1-32；P15：L1-34；P16：L1-33；P18：L1-35–L1-37 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP；`..` / 无前导 `/` 为 INVALID_PARAM；缺 query / path / dest |
-| `batch_execute` | L1 | L1-15；P2：L1-28 | rolled_back；混 check 时 atomic=false |
+| `batch_execute` | L1 | L1-15；P2：L1-28；P21：L1-44 | rolled_back；混 check 时 atomic=false；缺 commands 为 MISSING_PARAM |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
 | `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13；P11：L2-15；P12：L2-16；P14：L2-18 | lines 或 issues；分页；severity/prints；editor-file；engine-log；domain；q；默认 source；假 source 为 INVALID_PARAM |
 | `diagnostics_read` | L2 | L2-04；P13：L2-17 | issues 列表；不重编；不写 last_check |
-| `editor_preview` | L2 | L2-07 | PNG 魔数 |
+| `editor_preview` | L2 | L2-07；P21：L2-19 | PNG 魔数；缺 path 为 MISSING_PARAM |
 | `project_manage` | L2/L6 | L6-24、L6-25；P1：L2-08；P15：L6-28、L6-29 | settings 读回。缺 key 为 MISSING_PARAM。`stop` 与 `project_stop` 对齐即可 |
 | `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22；P11：L3-10 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump；假 mode |
 | `project_stop` | L3 | L3-04、L5-08 | 进程死 |
@@ -455,6 +458,7 @@ SKIP  L5-07  optional screenshot
   "p18_failed": [],
   "p19_failed": [],
   "p20_failed": [],
+  "p21_failed": [],
   "p1_skipped": []
 }
 ```
