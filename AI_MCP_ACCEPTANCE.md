@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P13** 已在打包编辑器上按 ID 实跑。P13 覆盖工程路径逃逸、`diagnostics_read` 不重编、以及干预缺参 / 假 op。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P14** 已在打包编辑器上按 ID 实跑。P14 覆盖 `logs_read source=engine`、未知按键、以及断点缺 line。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P13 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P14 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P13 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P13** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P14** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -183,6 +183,7 @@ P1–P13 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L2-15 | P11 | §7.3 | `logs_read` 不传 source | `status=ok`；`lines` 是列表；`sources` 是列表 |
 | L2-16 | P12 | §7.3、§10 | `logs_read source=explode` | `INVALID_PARAM` |
 | L2-17 | P13 | §7.3 | `diagnostics_read` | `status=ok`；`source=diagnostics`；不写 `last_check.json`（mtime 不变） |
+| L2-18 | P14 | §7.3 | `logs_read source=engine` | `status=ok`；`source` 为 `engine-log`，或 `sources` 含它；`lines` 是列表 |
 
 ### 5.3 L3 生命周期
 
@@ -291,6 +292,8 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L5-23 | P13 | §10、§11 R3 | `runtime_debug op=set_breakpoint` 不传 file | `MISSING_PARAM` |
 | L5-24 | P13 | §10、§11 R3 | `runtime_input` 不传 key | `MISSING_PARAM` |
 | L5-25 | P13 | §10、§11 R3 | `game_eval confirm=true` 不传 code | `MISSING_PARAM` |
+| L5-26 | P14 | §10、§11 R3 | `runtime_input key=not-a-key` | `INVALID_PARAM` |
+| L5-27 | P14 | §10、§11 R3 | `runtime_debug op=set_breakpoint` 有 file 不传 line | `MISSING_PARAM` |
 
 L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功仍要验 PNG。
 
@@ -361,7 +364,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `batch_execute` | L1 | L1-15；P2：L1-28 | rolled_back；混 check 时 atomic=false |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
-| `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13；P11：L2-15；P12：L2-16 | lines 或 issues；分页；severity/prints；editor-file；domain；q；默认 source；假 source 为 INVALID_PARAM |
+| `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13；P11：L2-15；P12：L2-16；P14：L2-18 | lines 或 issues；分页；severity/prints；editor-file；engine-log；domain；q；默认 source；假 source 为 INVALID_PARAM |
 | `diagnostics_read` | L2 | L2-04；P13：L2-17 | issues 列表；不重编；不写 last_check |
 | `editor_preview` | L2 | L2-07 | PNG 魔数 |
 | `project_manage` | L2/L6 | L6-24、L6-25；P1：L2-08 | settings 读回。`stop` 与 `project_stop` 对齐即可 |
@@ -374,9 +377,9 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `runtime_get_properties` | L4 | L4-05；P11：L4-51；P12：L4-52 | source=runtime；缺 id 为 MISSING_PARAM；默认读 latest |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
 | `runtime_screenshot` | L5 | L5-07 | 可选 PNG |
-| `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17；P13：L5-24 | player x 变小；无 live 拒绝；hold / 事件上限；缺 key 为 MISSING_PARAM |
+| `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17；P13：L5-24；P14：L5-26 | player x 变小；无 live 拒绝；hold / 事件上限；缺 key / 假 key |
 | `game_eval` | L5 | L5-01、L5-02、L5-05；P3：L5-14；P13：L5-25 | 无 confirm 拒绝；go.* 返回向量；超 4096 字节拒绝；缺 code 为 MISSING_PARAM |
-| `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19；P13：L5-22、L5-23 | 不进 `debug>`；命中后 frames；status 仍带上次栈；假 op / 缺 file |
+| `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19；P13：L5-22、L5-23；P14：L5-27 | 不进 `debug>`；命中后 frames；status 仍带上次栈；假 op / 缺 file / 缺 line |
 | `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22；P10：L6-27 | 文件 + get + list；假 op 为 UNKNOWN_OP |
 | `camera_manage` | L6 | L6-23 | cube 上有 camera |
 | `tilemap_manage` / `gui_manage` / `input_binding_manage` | L6 | L6-03–L6-05 | 读回 tile / text / jump |
@@ -431,6 +434,7 @@ SKIP  L5-07  optional screenshot
   "p11_failed": [],
   "p12_failed": [],
   "p13_failed": [],
+  "p14_failed": [],
   "p1_skipped": []
 }
 ```

@@ -970,6 +970,8 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("INVALID_PARAM", too_big["error"]["code"])
             _, bp = format_debug_request({"op": "set_breakpoint"})
             self.assertEqual("MISSING_PARAM", bp["error"]["code"])
+            _, missing_line = format_debug_request({"op": "set_breakpoint", "file": "/main/player.script"})
+            self.assertEqual("MISSING_PARAM", missing_line["error"]["code"])
             bp_body, bp_ok = format_debug_request({"op": "set_breakpoint", "file": "/main/player.script", "line": 9})
             self.assertIsNone(bp_ok)
             self.assertIn("file=main/player.script", bp_body)
