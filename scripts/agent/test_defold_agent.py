@@ -1178,6 +1178,10 @@ class ToolQualityTest(unittest.TestCase):
             self.assertIn("/main/box.png", got["data"]["images"])
             self.assertEqual(
                 "MISSING_PARAM",
+                dispatch_command(project, "atlas_manage", {"op": "add_image", "path": "/main/sprites.atlas"}, 2)["error"]["code"],
+            )
+            self.assertEqual(
+                "MISSING_PARAM",
                 dispatch_command(project, "atlas_manage", {"op": "set_property", "path": "/main/sprites.atlas", "value": "x"}, 2)["error"]["code"],
             )
             self.assertEqual(
@@ -2012,6 +2016,10 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual("99", node["data"]["text"])
             self.assertEqual([10.0, 20.0, 0.0], node["data"]["position"])
+            self.assertEqual(
+                "MISSING_PARAM",
+                dispatch_command(project, "gui_manage", {"op": "add_texture", "path": "/main/hud.gui"}, 2)["error"]["code"],
+            )
             self.assertEqual(
                 "MISSING_PARAM",
                 dispatch_command(project, "gui_manage", {"op": "set_node", "path": "/main/hud.gui", "id": "score"}, 2)["error"]["code"],

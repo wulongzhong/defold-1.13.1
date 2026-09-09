@@ -614,7 +614,7 @@ def known_ops(command: str) -> List[str]:
 def add_block(command: str, op: str, params: Dict[str, Any]) -> Optional[str]:
     if command == "atlas_manage":
         if op == "add_image":
-            image = params.get("image") or params.get("path")
+            image = params.get("image")
             if not image:
                 raise KeyError("image")
             ident = params.get("id")
@@ -656,7 +656,7 @@ def add_block(command: str, op: str, params: Dict[str, Any]) -> Optional[str]:
             )
         if op == "add_texture":
             name = params.get("name") or "main"
-            texture = params.get("texture") or params.get("path")
+            texture = params.get("texture")
             if not texture:
                 raise KeyError("texture")
             return f'textures {{\n  name: "{name}"\n  texture: "{sanitize_proj_path(str(texture))}"\n}}\n'
