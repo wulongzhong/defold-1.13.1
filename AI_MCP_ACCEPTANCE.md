@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P21** 已在打包编辑器上按 ID 实跑。P21 覆盖 collection_save / batch / preview 缺参。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P21** 已在打包编辑器上按 ID 实跑。**P22** 是需求里已写、合同还没编号的 rename / remove_instance 缺参。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P21 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P22 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P21 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P21** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P21** = 已在打包编辑器上跑过。**P22** = 本轮按需求补的编号；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -175,6 +175,8 @@ P1–P21 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L1-42 | P20 | §8.2、§10 | `script_manage read` 不传 path | `MISSING_PARAM` |
 | L1-43 | P21 | §8.3、§10 | `collection_save` 不传 path | `MISSING_PARAM` |
 | L1-44 | P21 | §8.4、§10 | `batch_execute` 不传 commands | `MISSING_PARAM` |
+| L1-45 | P22 | §8.3、§10 | `gameobject_manage rename` 不传 name | `MISSING_PARAM` |
+| L1-46 | P22 | §8.3、§10 | `collection_manage remove_instance` 不传 id | `MISSING_PARAM` |
 
 ### 5.2 L2 编译诊断
 
@@ -367,10 +369,10 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `collection_open` | L1 | L1-01；P20：L1-40 | ok；缺 path 为 MISSING_PARAM |
 | `collection_get_hierarchy` | L1 | L1-01、L1-02、L1-16；P2：L1-25 | source + ids；分页 truncated |
 | `collection_save` | L1 | L1-13；P21：L1-43 | 磁盘含 id；缺 path 为 MISSING_PARAM |
-| `collection_manage` | L1 | L1-10、L1-11、L1-12；P2：L1-27 | create / remove / get_roots / add_instance |
+| `collection_manage` | L1 | L1-10、L1-11、L1-12；P2：L1-27；P22：L1-46 | create / remove / get_roots / add_instance；缺 id 为 MISSING_PARAM |
 | `gameobject_create` | L1 | L1-02、L1-07 | hierarchy + position |
 | `gameobject_get_properties` | L1 | L1-02、L1-03、L1-16；P6：L1-30 | source + position / components；缺 id 为 MISSING_PARAM |
-| `gameobject_manage` | L1 | L1-03、L1-04；P1：L1-17、L1-18；P6：L1-29；P19：L1-38 | set_property 读回；find 命中；假 op 为 UNKNOWN_OP；缺 property 为 MISSING_PARAM |
+| `gameobject_manage` | L1 | L1-03、L1-04；P1：L1-17、L1-18；P6：L1-29；P19：L1-38；P22：L1-45 | set_property 读回；find 命中；假 op 为 UNKNOWN_OP；缺 property / name 为 MISSING_PARAM |
 | `component_add` | L1 | L1-09 | 有 label |
 | `component_manage` | L1 | L1-19；P19：L1-39 | P1；缺 component 为 MISSING_PARAM |
 | `script_create` | L1 | L1-05；P3：L0-11、L0-12；P20：L1-41 | 文件 + init；building/observing 拒写；缺 path 为 MISSING_PARAM |
@@ -459,6 +461,7 @@ SKIP  L5-07  optional screenshot
   "p19_failed": [],
   "p20_failed": [],
   "p21_failed": [],
+  "p22_failed": [],
   "p1_skipped": []
 }
 ```
