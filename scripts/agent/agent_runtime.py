@@ -629,7 +629,11 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             return error_envelope("MISSING_PARAM", "get_subtree needs id")
         node = find_node(graph, str(go_id))
         if node is None:
-            return error_envelope("NOT_FOUND", f"Runtime node '{go_id}' was not found")
+            return error_envelope(
+                "NOT_FOUND",
+                f"Runtime node '{go_id}' was not found",
+                "Call runtime_get_hierarchy or runtime_snapshot_query op=list_ids.",
+            )
         depth = int(params.get("depth") if params.get("depth") is not None else 8)
         offset = int(params.get("offset") or 0)
         limit = min(int(params.get("limit") or PREVIEW_LIMIT), NODE_HARD_CAP)

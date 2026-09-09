@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P10** 已在打包编辑器上按 ID 实跑。P10 覆盖 `NOT_FOUND` hint、Pointer 未命中、`list_ids` 默认 limit、默认读 latest、以及 manage 的 `UNKNOWN_OP`。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P11** 已在打包编辑器上按 ID 实跑。P11 覆盖 `get_subtree` NOT_FOUND hint、`runtime_get_properties` 缺参、日志默认 source、以及非法 `project_run` mode。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P10 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P11 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P10 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P10** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P11** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -179,6 +179,7 @@ P1–P10 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L2-12 | P4 | §7.3 | `logs_read` `source=all` `domain=ENGINE` | `status=ok`；`domain` 为 `ENGINE`；`lines` 是列表（可空） |
 | L2-13 | P5 | §7.3 | `logs_read` `source=all` `q=ENGINE` | `status=ok`；`q` 为 `ENGINE`；`lines` 是列表（可空） |
 | L2-14 | P7 | §7.4 | 默认 `runtime_observe` 回包 | `logs.lines` 长度 ≤ 40 |
+| L2-15 | P11 | §7.3 | `logs_read` 不传 source | `status=ok`；`lines` 是列表；`sources` 是列表 |
 
 ### 5.3 L3 生命周期
 
@@ -192,6 +193,7 @@ P1–P10 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过�
 | L3-06 | P3 | §8.3、§3.4 | 关编辑器时 `api_manage op=get q=go.set_position` | 结果提到 `set_position`（引擎 `/*#` / `engine-docs`） |
 | L3-07 | P4 | §7.2、§9 | `project_stop` 之后 `project_run mode=batch` `frames=5` | `status=ok`；随后 CLI live `alive` 不是 true |
 | L3-08 | P5 | §10 | `project_run` 指向不存在的 `engine` | `ENGINE_UNREACHABLE` |
+| L3-10 | P11 | §7.3、§10 | `project_run mode=explode` | `INVALID_PARAM` |
 
 L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默两个 dmengine。
 
@@ -250,6 +252,8 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L4-47 | P10 | §7.8、§10 | `get_path` 指针 `/no/such/pointer` | `NOT_FOUND` |
 | L4-48 | P10 | §7.8 | `list_ids` 不传 limit | 回包 `limit==200` |
 | L4-49 | P10 | §7.8 | `get_node id=player` 不传 snapshot | `status=ok`；读的是 latest |
+| L4-50 | P11 | §10 | `get_subtree` 假 id | `NOT_FOUND`；hint 提到 `runtime_get_hierarchy` |
+| L4-51 | P11 | §10 | `runtime_get_properties` 不传 id | `MISSING_PARAM` |
 
 ### 5.5 L5 干预
 
@@ -348,17 +352,17 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `batch_execute` | L1 | L1-15；P2：L1-28 | rolled_back；混 check 时 atomic=false |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
-| `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13 | lines 或 issues；分页；severity/prints；editor-file；domain；q |
+| `logs_read` | L2 | L2-03；P2：L2-09；P3：L2-10、L2-11；P4：L2-12；P5：L2-13；P11：L2-15 | lines 或 issues；分页；severity/prints；editor-file；domain；q；默认 source |
 | `diagnostics_read` | L2 | L2-04 | issues 列表 |
 | `editor_preview` | L2 | L2-07 | PNG 魔数 |
 | `project_manage` | L2/L6 | L6-24、L6-25；P1：L2-08 | settings 读回。`stop` 与 `project_stop` 对齐即可 |
-| `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump |
+| `project_run` | L3 | L3-01、L3-03；P4：L3-07；P5：L3-08、L4-22；P11：L3-10 | 一个 live；batch 跑完不留 live；假引擎 / 无 dump；假 mode |
 | `project_stop` | L3 | L3-04、L5-08 | 进程死 |
 | `runtime_state` | L4 | L4-03；P8：L0-15 | alive；stop 后 no_runtime |
 | `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24；P6：L4-27；P7：L2-14、L4-30 | 句柄 + 摘要；无 live 拒绝；快照只留 8；dest 不轮转；logs.lines ≤ 40 |
 | `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23；P6：L4-25、L4-26、L4-28；P7：L4-31–L4-35；P8：L4-36–L4-40；P9：L4-41–L4-45；P10：L4-46–L4-49 | get_node 是 GO；分页；默认 latest / list_ids 200；id_glob；Pointer 校验；NOT_FOUND hint |
 | `runtime_get_hierarchy` | L4 | L4-04；P3：L4-18；P6：L4-29 | source=runtime；分页 truncated；默认 limit 200 |
-| `runtime_get_properties` | L4 | L4-05 | source=runtime |
+| `runtime_get_properties` | L4 | L4-05；P11：L4-51 | source=runtime；缺 id 为 MISSING_PARAM |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
 | `runtime_screenshot` | L5 | L5-07 | 可选 PNG |
 | `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17 | player x 变小；无 live 拒绝；hold / 事件上限 |
@@ -415,6 +419,7 @@ SKIP  L5-07  optional screenshot
   "p8_failed": [],
   "p9_failed": [],
   "p10_failed": [],
+  "p11_failed": [],
   "p1_skipped": []
 }
 ```
