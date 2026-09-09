@@ -280,6 +280,7 @@ def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optio
         if scale:
             properties["scale"] = float(scale.group(1))
     proto = instance_prototype(block)
+    header = instance_kind(block)
     go_text = ""
     if proto and project is not None:
         try:
@@ -288,11 +289,17 @@ def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optio
             go_text = ""
     else:
         go_text = decode_data_field(block) or ""
+    if header == "collection_instances":
+        kind = "collection_instance"
+    elif proto:
+        kind = "referenced"
+    else:
+        kind = "embedded"
     payload = {
         "id": go_id,
         "path": path,
         "source": "disk",
-        "kind": "referenced" if proto else "embedded",
+        "kind": kind,
         "prototype": proto,
         "components": list_component_ids(go_text),
         "properties": properties,
@@ -301,6 +308,9 @@ def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optio
     parent = find_parent_id(text, go_id)
     if parent:
         payload["parent"] = parent
+    nested = re.search(r'(?:^|\n)\s*collection:\s*"([^"]+)"', block)
+    if nested:
+        payload["collection"] = nested.group(1)
     return payload
 
 
@@ -997,6 +1007,10 @@ def disk_command(project: Path, command: str, params: Dict[str, Any]) -> Dict[st
                 str(go_id),
                 project,
             )
+            if parsed is None:
+                from agent_runtime import resolve_authoring_properties
+
+                parsed = resolve_authoring_properties(project, path, str(go_id))
             if parsed is None:
                 return error_envelope("NOT_FOUND", f"Game object '{go_id}' was not found")
             return ok_envelope(parsed)
@@ -2282,7 +2296,16 @@ def dispatch_command(
         result = intercepted
     else:
         editor = editor_command(project, command, params, timeout)
-        result = editor if editor is not None else disk_command(project, command, params)
+        if (
+            editor is not None
+            and command == "gameobject_get_properties"
+            and editor.get("status") == "error"
+            and (editor.get("error") or {}).get("code") == "NOT_FOUND"
+        ):
+            disk = disk_command(project, command, params)
+            result = disk if disk.get("status") == "ok" else editor
+        else:
+            result = editor if editor is not None else disk_command(project, command, params)
     if command in {"editor_state", "editor_manage"} and result.get("status") == "ok" and isinstance(result.get("data"), dict):
         if command == "editor_state" or params.get("op") == "state":
             from agent_runtime import live_status

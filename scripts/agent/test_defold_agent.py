@@ -1333,6 +1333,49 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual("embedded", result["data"]["kind"])
             self.assertEqual([], result["data"]["components"])
 
+    def test_get_properties_resolves_collection_instance(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "game").mkdir()
+            (project / "game" / "player.collection").write_text(
+                'name: "player"\nembedded_instances {\n  id: "player"\n  data: ""\n}\n',
+                encoding="utf-8",
+            )
+            (project / "game" / "game.collection").write_text(
+                'name: "game"\n'
+                "collection_instances {\n"
+                '  id: "player"\n'
+                '  collection: "/game/player.collection"\n'
+                "  position {\n"
+                "    x: 256.0\n"
+                "    y: 165.0\n"
+                "    z: 1.0\n"
+                "  }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            result = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/game/game.collection", "id": "player"},
+                2,
+            )
+            self.assertEqual("ok", result["status"], result)
+            self.assertEqual("collection_instance", result["data"]["kind"])
+            self.assertEqual("/game/player.collection", result["data"].get("collection"))
+            self.assertEqual([256.0, 165.0, 1.0], result["data"]["properties"]["position"])
+            nested = dispatch_command(
+                project,
+                "gameobject_get_properties",
+                {"collection": "/game/game.collection", "id": "player/player"},
+                2,
+            )
+            self.assertEqual("ok", nested["status"], nested)
+            self.assertEqual([256.0, 165.0, 1.0], nested["data"]["properties"]["position"])
+
     def test_authoring_position_omitted_z_and_missing_block(self):
         from agent_ops import parse_gameobject_properties
 

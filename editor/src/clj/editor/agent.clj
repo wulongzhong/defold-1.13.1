@@ -251,6 +251,7 @@
   (cond
     (g/node-instance? collection/ReferencedGOInstanceNode node-id) "referenced"
     (g/node-instance? collection/EmbeddedGOInstanceNode node-id) "embedded"
+    (g/node-instance? collection/CollectionInstanceNode node-id) "collection_instance"
     :else nil))
 
 (defn- source-proj-path [node-id]
@@ -294,8 +295,17 @@
           (fail! "INVALID_PARAM" (str path " is not a collection") nil)
           node)))))
 
+(defn- collection-instance-by-id [collection-node go-id]
+  (coll/first-where
+    (fn [item]
+      (let [node-id (:node-id item)]
+        (and (g/node-instance? collection/CollectionInstanceNode node-id)
+             (= go-id (g/node-value node-id :id)))))
+    (:children (g/node-value collection-node :node-outline))))
+
 (defn- resolve-go-instance [collection-node go-id]
-  (let [instance (get (g/node-value collection-node :go-inst-ids) go-id)]
+  (let [instance (or (get (g/node-value collection-node :go-inst-ids) go-id)
+                     (collection-instance-by-id collection-node go-id))]
     (if-not instance
       (fail! "NOT_FOUND" (str "Game object '" go-id "' was not found") "Call collection_get_hierarchy.")
       instance)))
@@ -560,27 +570,36 @@
 (defn- cmd-gameobject-get-properties [ctx params]
   (let [collection-node (resolve-collection-node ctx params)
         go-id (require-string params :id)
-        instance (resolve-go-instance collection-node go-id)
-        go-node (resolve-go-node instance)
-        component-id (optional-string params :component)
-        target (if component-id
-                 (resolve-component go-node component-id)
-                 instance)
-        ids (g/node-value go-node :component-ids)]
-    {:id (g/node-value target :id)
-     :type (node-kind target)
-     :kind (instance-kind instance)
-     :node_id target
-     :resource (source-proj-path target)
-     :source "editor"
-     :components (into []
-                       (map (fn [[id node]]
-                              {:id id
-                               :node_id node
-                               :type (node-kind node)
-                               :resource (source-proj-path node)}))
-                       ids)
-     :properties (property-snapshot target)}))
+        instance (resolve-go-instance collection-node go-id)]
+    (if (g/node-instance? collection/CollectionInstanceNode instance)
+      {:id (g/node-value instance :id)
+       :type "collection_instance"
+       :kind "collection_instance"
+       :node_id instance
+       :resource (source-proj-path instance)
+       :source "editor"
+       :components []
+       :properties (property-snapshot instance)}
+      (let [go-node (resolve-go-node instance)
+            component-id (optional-string params :component)
+            target (if component-id
+                     (resolve-component go-node component-id)
+                     instance)
+            ids (g/node-value go-node :component-ids)]
+        {:id (g/node-value target :id)
+         :type (node-kind target)
+         :kind (instance-kind instance)
+         :node_id target
+         :resource (source-proj-path target)
+         :source "editor"
+         :components (into []
+                           (map (fn [[id node]]
+                                  {:id id
+                                   :node_id node
+                                   :type (node-kind node)
+                                   :resource (source-proj-path node)}))
+                           ids)
+         :properties (property-snapshot target)}))))
 
 (defn- session-id [^File project-dir token]
   (str (.getName project-dir) "@" (subs (str token) 0 (min 8 (count (str token))))))

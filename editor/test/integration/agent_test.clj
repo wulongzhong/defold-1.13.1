@@ -97,3 +97,22 @@
       (is (= "UNKNOWN_COMMAND" (get-in unknown [:error :code])))
       (is (= "error" (:status bad-op)))
       (is (= "UNKNOWN_OP" (get-in bad-op [:error :code]))))))
+
+(deftest get-properties-resolves-collection-instance-test
+  (test-util/with-scratch-project "test/resources/small_project"
+    (let [ctx (ctx project workspace app-view)
+
+          _created-coll (data (agent/handle ctx "collection_manage" {:op "create"
+                                                                    :path "/main/room.collection"}))
+
+          created (data (agent/handle ctx "gameobject_create" {:collection "/main/main.collection"
+                                                              :id "room"
+                                                              :path "/main/room.collection"
+                                                              :position [256.0 165.0 1.0]}))
+
+          props (data (agent/handle ctx "gameobject_get_properties" {:collection "/main/main.collection"
+                                                                     :id "room"}))]
+      (is (= "collection_instance" (:kind created)))
+      (is (= "room" (:id props)))
+      (is (= "collection_instance" (:kind props)))
+      (is (= [256.0 165.0 1.0] (get-in props [:properties "position" :value]))))))
