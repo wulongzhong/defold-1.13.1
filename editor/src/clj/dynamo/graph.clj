@@ -39,7 +39,8 @@
 
 (def ^:dynamic *current-operation-sequence*
   "When bound, every `transact` is tagged with this sequence label so successive
-  transactions coalesce into one undo point. Used by agent `batch_execute`.")
+  transactions coalesce into one undo point. Used by agent `batch_execute`."
+  nil)
 
 (namespaces/import-vars [internal.graph.types node-id->graph-id node->graph-id sources targets connected? dependencies Node node-id node-id? produce-value node-by-id-at endpoint endpoint-node-id endpoint-label])
 

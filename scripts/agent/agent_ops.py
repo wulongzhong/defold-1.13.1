@@ -202,15 +202,28 @@ def list_component_ids(go_text: str) -> List[Dict[str, str]]:
     return items
 
 
+def parse_xyz_object(text: str, name: str, default_z: float = 0.0) -> Optional[List[float]]:
+    match = re.search(rf"(?m)^[ \t]*{re.escape(name)}\s*\{{(?P<body>[^}}]*)\}}", text)
+    if not match:
+        return None
+    body = match.group("body")
+    nums: Dict[str, float] = {}
+    for key in ("x", "y", "z"):
+        found = re.search(rf"{key}:\s*([-\d.]+)", body)
+        if found:
+            nums[key] = float(found.group(1))
+    if "x" not in nums and "y" not in nums:
+        return None
+    return [nums.get("x", 0.0), nums.get("y", 0.0), nums.get("z", default_z)]
+
+
 def parse_gameobject_properties(text: str, path: str, go_id: str, project: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     try:
         _start, _end, block = find_instance_span(text, go_id)
     except FileNotFoundError:
         return None
-    pos = re.search(r"position\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)", block)
     properties: Dict[str, Any] = {}
-    if pos:
-        properties["position"] = [float(pos.group(1)), float(pos.group(2)), float(pos.group(3))]
+    properties["position"] = parse_xyz_object(block, "position") or [0.0, 0.0, 0.0]
     rot = re.search(
         r"rotation\s*\{\s*x:\s*([-\d.]+)\s*y:\s*([-\d.]+)\s*z:\s*([-\d.]+)\s*w:\s*([-\d.]+)",
         block,

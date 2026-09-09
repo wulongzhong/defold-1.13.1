@@ -208,6 +208,47 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertEqual("ok", result["status"])
             self.assertEqual([10.0, 20.0, 0.0], result["data"]["node"]["world_position"])
 
+    def test_get_node_prefers_game_object_over_script(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from agent_runtime import wrap_engine_dump
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            raw = project / "raw.json"
+            raw.write_text(
+                json.dumps(
+                    {
+                        "id": "main",
+                        "type": "collectionc",
+                        "children": [
+                            {
+                                "id": "/player",
+                                "type": "goc",
+                                "world_position": [8.0, 0.0, 0.0],
+                                "children": [
+                                    {
+                                        "id": "player",
+                                        "type": "scriptc",
+                                        "resource": "/main/player.scriptc",
+                                        "speed": 120.0,
+                                        "children": [],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            wrap_engine_dump(project, raw, mode="live", frame=1, target={})
+            result = query_snapshot(project, {"op": "get_node", "id": "player"})
+            self.assertEqual("ok", result["status"])
+            self.assertEqual("goc", result["data"]["node"]["type"])
+            self.assertEqual([8.0, 0.0, 0.0], result["data"]["node"]["world_position"])
+
     def test_find_by_type(self):
         import tempfile
 
@@ -929,6 +970,28 @@ class ToolQualityTest(unittest.TestCase):
             self.assertEqual([1.0, 2.0, 3.0], result["data"]["properties"]["position"])
             self.assertEqual("embedded", result["data"]["kind"])
             self.assertEqual([], result["data"]["components"])
+
+    def test_authoring_position_omitted_z_and_missing_block(self):
+        from agent_ops import parse_gameobject_properties
+
+        text = (
+            'name: "main"\n'
+            "embedded_instances {\n"
+            '  id: "cube"\n'
+            "  position {\n"
+            "    x: 120.0\n"
+            "    y: 40.0\n"
+            "  }\n"
+            "}\n"
+            "embedded_instances {\n"
+            '  id: "player"\n'
+            '  data: ""\n'
+            "}\n"
+        )
+        cube = parse_gameobject_properties(text, "/main/main.collection", "cube")
+        player = parse_gameobject_properties(text, "/main/main.collection", "player")
+        self.assertEqual([120.0, 40.0, 0.0], cube["properties"]["position"])
+        self.assertEqual([0.0, 0.0, 0.0], player["properties"]["position"])
 
     def test_runtime_state_lists_targets(self):
         import tempfile

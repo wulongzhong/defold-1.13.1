@@ -95,6 +95,42 @@ def node_type(node: Dict[str, Any]) -> str:
     return "" if value is None else str(value)
 
 
+def normalize_node_id(value: Any) -> str:
+    return str(value or "").strip().lstrip("/")
+
+
+def ids_match(left: Any, right: Any) -> bool:
+    a = normalize_node_id(left)
+    b = normalize_node_id(right)
+    return bool(a) and a == b
+
+
+GO_NODE_TYPES = {"goc", "gameobject", "go"}
+COMPONENT_NODE_TYPES = {
+    "scriptc",
+    "labelc",
+    "camerac",
+    "spritec",
+    "soundc",
+    "modelc",
+    "collisionobjectc",
+    "factoryc",
+    "collectionfactoryc",
+    "particlefxc",
+    "tilemapc",
+    "guic",
+    "meshc",
+}
+
+
+def is_go_node(node: Dict[str, Any]) -> bool:
+    kind = node_type(node)
+    if kind in GO_NODE_TYPES:
+        return True
+    ident = node_id(node)
+    return bool(ident.startswith("/")) and kind not in COMPONENT_NODE_TYPES and kind != "collectionc"
+
+
 def count_nodes(graph: Any) -> int:
     return sum(1 for _ in walk_nodes(graph))
 
@@ -311,19 +347,21 @@ def load_snapshot(project: Path, snapshot: Optional[str]) -> Dict[str, Any]:
 def find_node(graph: Any, go_id: str, component: Optional[str] = None) -> Optional[Dict[str, Any]]:
     if not go_id:
         return None
-    for node in walk_nodes(graph):
-        if node_id(node) != go_id:
-            continue
-        if not component:
-            return node
-        children = node.get("children")
-        if isinstance(children, list):
-            for child in children:
-                if isinstance(child, dict) and (
-                    node_id(child) == component or node_type(child) == component
-                ):
-                    return child
+    matches = [node for node in walk_nodes(graph) if ids_match(node_id(node), go_id)]
+    if not matches:
         return None
+    node = next((item for item in matches if is_go_node(item)), None)
+    if node is None:
+        node = next((item for item in matches if item.get("world_position") is not None), matches[0])
+    if not component:
+        return node
+    children = node.get("children")
+    if isinstance(children, list):
+        for child in children:
+            if isinstance(child, dict) and (
+                ids_match(node_id(child), component) or node_type(child) == component
+            ):
+                return child
     return None
 
 
@@ -606,7 +644,9 @@ def find_runtime_parent(graph: Any, target_id: str) -> Optional[str]:
         if not isinstance(children, list):
             continue
         for child in children:
-            if isinstance(child, dict) and node_id(child) == target_id:
+            if isinstance(child, dict) and ids_match(node_id(child), target_id):
+                if node_type(node) == "collectionc":
+                    return None
                 parent = node_id(node)
                 return parent or None
     return None
@@ -1275,9 +1315,22 @@ DIFF_SKIP = {
 
 def index_nodes_by_id(graph: Any) -> Dict[str, Dict[str, Any]]:
     found: Dict[str, Dict[str, Any]] = {}
+
+    def put(key: str, node: Dict[str, Any]) -> None:
+        if not key:
+            return
+        existing = found.get(key)
+        if existing is None or (is_go_node(node) and not is_go_node(existing)):
+            found[key] = node
+
     for node in walk_nodes(graph):
-        if isinstance(node, dict) and node_id(node):
-            found[node_id(node)] = node
+        if not isinstance(node, dict):
+            continue
+        ident = node_id(node)
+        if not ident:
+            continue
+        put(ident, node)
+        put(normalize_node_id(ident), node)
     return found
 
 
