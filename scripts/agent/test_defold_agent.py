@@ -373,6 +373,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertTrue(capped["data"].get("hint"))
             default_sub = query_snapshot(project, {"op": "get_subtree", "id": "cube"})
             self.assertEqual(80, default_sub["data"]["limit"])
+            self.assertEqual(8, default_sub["data"]["depth"])
             default_find = query_snapshot(project, {"op": "find", "type": "goc"})
             self.assertEqual(50, default_find["data"]["limit"])
             unknown = query_snapshot(project, {"op": "explode"})
@@ -442,6 +443,7 @@ class RuntimeSnapshotTest(unittest.TestCase):
             props = dispatch_command(project, "runtime_get_properties", {"id": "cube"}, 5)
             self.assertEqual("ok", props["status"])
             self.assertEqual("runtime", props["data"]["source"])
+            self.assertEqual(_record["id"], props["data"]["snapshot"])
             tree = dispatch_command(project, "runtime_get_hierarchy", {}, 5)
             self.assertEqual("ok", tree["status"])
             ids = [node["id"] for node in tree["data"]["nodes"]]
@@ -1558,6 +1560,9 @@ class ToolQualityTest(unittest.TestCase):
             blocked = dispatch_command(project, "logs_read", {"source": "editor"}, 1)
             self.assertEqual("error", blocked["status"])
             self.assertEqual("EDITOR_UNREACHABLE", blocked["error"]["code"])
+            invalid = dispatch_command(project, "logs_read", {"source": "explode"}, 1)
+            self.assertEqual("error", invalid["status"])
+            self.assertEqual("INVALID_PARAM", invalid["error"]["code"])
 
     def test_gameobject_parent_on_disk(self):
         import tempfile

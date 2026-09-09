@@ -647,6 +647,7 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             "count": used,
             "offset": offset,
             "limit": limit,
+            "depth": depth,
             "source": "runtime",
             "snapshot": record.get("id"),
         }
