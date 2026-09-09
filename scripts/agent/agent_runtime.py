@@ -619,7 +619,7 @@ def query_snapshot(project: Path, params: Dict[str, Any]) -> Dict[str, Any]:
             return error_envelope(
                 "NOT_FOUND",
                 f"Runtime node '{go_id}' was not found",
-                "Call runtime_snapshot_query op=list_ids or find.",
+                "Call runtime_get_hierarchy or runtime_snapshot_query op=list_ids.",
             )
         return ok_envelope({"node": node, "source": "runtime", "snapshot": record.get("id")})
 

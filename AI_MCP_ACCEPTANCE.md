@@ -26,7 +26,7 @@
 3. 用本机已有 Python 跑 `scripts/agent/defold_agent.py`（stdio MCP 同一套 dispatch）。
 4. 编辑器开着。check 走 `POST /command/check`。live 引擎来自这份 zip 的 unpack / 包内 jar，带 `--agent-control`。
 
-**P1**–**P9** 已在打包编辑器上按 ID 实跑。P9 覆盖 `id_glob`、JSON Pointer 校验、以及 `compare_authoring` 默认 limit。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
+**P1**–**P10** 已在打包编辑器上按 ID 实跑。P10 覆盖 `NOT_FOUND` hint、Pointer 未命中、`list_ids` 默认 limit、默认读 latest、以及 manage 的 `UNKNOWN_OP`。关编辑器的磁盘 / live 路径（L3-05）是其中一条，不是整表的前提。
 
 不是验收对象：`bob-jar-*` artifact、单独的 `dmengine-x86_64-win32` artifact、系统 JDK、本仓库当游戏工程、`test_defold_agent.py` 单测（单测是开发回归，不能代替本表）。
 
@@ -65,7 +65,7 @@
 
 一层通过：该层全部 **P0** 用例通过。  
 P0 签字：§5 全部 P0 通过，且 §2 硬约束未破。  
-P1–P9 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
+P1–P10 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。仅 L5-07（可选截屏）允许 `SKIP`。
 
 ---
 
@@ -96,7 +96,7 @@ P1–P9 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。
 
 ## 5. 用例
 
-优先级：**P0** = 签字必须过。**P1**–**P9** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
+优先级：**P0** = 签字必须过。**P1**–**P10** = 已在打包编辑器上跑过；失败与 P0 一样要修，不得从合同删掉。
 
 断言里的「约等于」：坐标误差 ≤ 1.5（作者态）或移动判定为 x 至少减少 0.5（输入后）。
 
@@ -159,6 +159,7 @@ P1–P9 必须实跑；漏跑 = 失败。禁止把没跑的条目标成通过。
 | L1-28 | P2 | §8.4 | `batch_execute`：filesystem 写 + `project_check` | `status=ok`；`data.atomic is false` |
 | L1-29 | P6 | §10 | `gameobject_manage` 假 op | `UNKNOWN_OP` |
 | L1-30 | P6 | §10 | `gameobject_get_properties` 不传 id | `MISSING_PARAM` |
+| L1-31 | P10 | §10 | `filesystem_manage` 假 op | `UNKNOWN_OP` |
 
 ### 5.2 L2 编译诊断
 
@@ -245,6 +246,10 @@ L3-03 若实现是「先停再拉」且回包诚实，算通过；禁止静默�
 | L4-43 | P9 | §7.8 | `find id_glob=*player*` | matches 非空 |
 | L4-44 | P9 | §7.8 | `compare_authoring` 不传 limit | 回包 `limit==80` |
 | L4-45 | P9 | §10 | `get_path` 不传 path | `MISSING_PARAM` |
+| L4-46 | P10 | §10 | `get_node` 假 id | `NOT_FOUND`；hint 提到 `runtime_get_hierarchy` |
+| L4-47 | P10 | §7.8、§10 | `get_path` 指针 `/no/such/pointer` | `NOT_FOUND` |
+| L4-48 | P10 | §7.8 | `list_ids` 不传 limit | 回包 `limit==200` |
+| L4-49 | P10 | §7.8 | `get_node id=player` 不传 snapshot | `status=ok`；读的是 latest |
 
 ### 5.5 L5 干预
 
@@ -308,6 +313,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | L6-24 | P0 | `project_manage settings_get` `project.title` | 值是 `MCP Acceptance` |
 | L6-25 | P0 | `settings_set` `project.version=9.9` 再 get | 读回是 `9.9`（或实现规范化后的等价） |
 | L6-26 | P1 | 各 manage 的 `set_property` / `remove` | 按 schema 各验一条 |
+| L6-27 | P10 | `atlas_manage` 假 op | `UNKNOWN_OP` |
 
 关着编辑器时这些写必须 `undoable: false` 且 `source: disk`（P1，需求 §5 L6）。
 
@@ -338,7 +344,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `script_attach` | L1 | L1-06、L1-07 | components |
 | `script_patch` | L1 | L1-08、L2-05 | 文本变化 |
 | `script_manage` | L1 | L1-08；P1：L1-20 | read 文本 |
-| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26 | 读写搜拷分页；拒读/删快照 |
+| `filesystem_manage` | L1 | L1-14、L1-21、L1-22；P2：L1-24、L1-26；P10：L1-31 | 读写搜拷分页；拒读/删快照；假 op 为 UNKNOWN_OP |
 | `batch_execute` | L1 | L1-15；P2：L1-28 | rolled_back；混 check 时 atomic=false |
 | `project_check` | L2 | L2-01、L2-05、L2-06 | launched=false；坏 Lua 有 file:line |
 | `project_build` | L2 | L2-02 | launched=false |
@@ -350,7 +356,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `project_stop` | L3 | L3-04、L5-08 | 进程死 |
 | `runtime_state` | L4 | L4-03；P8：L0-15 | alive；stop 后 no_runtime |
 | `runtime_observe` | L4 | L4-01、L4-02；P5：L4-21、L4-24；P6：L4-27；P7：L2-14、L4-30 | 句柄 + 摘要；无 live 拒绝；快照只留 8；dest 不轮转；logs.lines ≤ 40 |
-| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23；P6：L4-25、L4-26、L4-28；P7：L4-31–L4-35；P8：L4-36–L4-40；P9：L4-41–L4-45 | get_node 是 GO；分页；默认 limit；id_glob；Pointer 校验；compare_authoring limit 80 |
+| `runtime_snapshot_query` | L4 | L4-06–L4-13；P2：L4-17；P4：L4-19、L4-20；P5：L4-23；P6：L4-25、L4-26、L4-28；P7：L4-31–L4-35；P8：L4-36–L4-40；P9：L4-41–L4-45；P10：L4-46–L4-49 | get_node 是 GO；分页；默认 latest / list_ids 200；id_glob；Pointer 校验；NOT_FOUND hint |
 | `runtime_get_hierarchy` | L4 | L4-04；P3：L4-18；P6：L4-29 | source=runtime；分页 truncated；默认 limit 200 |
 | `runtime_get_properties` | L4 | L4-05 | source=runtime |
 | `runtime_diff` | L4 | L4-12 | 两份真快照 |
@@ -358,7 +364,7 @@ L5-07 在需求里不是主环，故失败 → SKIP，不算 P0 崩盘。成功�
 | `runtime_input` | L5 | L5-03；P2：L5-09；P3：L5-15；P4：L5-17 | player x 变小；无 live 拒绝；hold / 事件上限 |
 | `game_eval` | L5 | L5-01、L5-02、L5-05；P3：L5-14 | 无 confirm 拒绝；go.* 返回向量；超 4096 字节拒绝 |
 | `runtime_debug` | L5 | L5-06；P2：L5-11；P3：L5-12、L5-13、L5-16；P5：L5-19 | 不进 `debug>`；命中后 frames；status 仍带上次栈 |
-| `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22 | 文件 + get + list |
+| `atlas_manage` … `appmanifest_manage` | L6 | L6-01–L6-22；P10：L6-27 | 文件 + get + list；假 op 为 UNKNOWN_OP |
 | `camera_manage` | L6 | L6-23 | cube 上有 camera |
 | `tilemap_manage` / `gui_manage` / `input_binding_manage` | L6 | L6-03–L6-05 | 读回 tile / text / jump |
 
@@ -408,6 +414,7 @@ SKIP  L5-07  optional screenshot
   "p7_failed": [],
   "p8_failed": [],
   "p9_failed": [],
+  "p10_failed": [],
   "p1_skipped": []
 }
 ```

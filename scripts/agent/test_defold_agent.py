@@ -266,6 +266,9 @@ class RuntimeSnapshotTest(unittest.TestCase):
             result = query_snapshot(project, {"op": "get_node", "id": "cube"})
             self.assertEqual("ok", result["status"])
             self.assertEqual([10.0, 20.0, 0.0], result["data"]["node"]["world_position"])
+            missing = query_snapshot(project, {"op": "get_node", "id": "no-such-go-xyz"})
+            self.assertEqual("NOT_FOUND", missing["error"]["code"])
+            self.assertIn("runtime_get_hierarchy", missing["error"].get("hint") or "")
 
     def test_get_node_prefers_game_object_over_script(self):
         import json
