@@ -553,6 +553,7 @@
          :offset offset
          :limit limit
          :total (count children)
+         :truncated (< (+ offset (count page)) (count children))
          :source "editor"
          :children (mapv #(outline-node % (:localization ctx)) page)}))))
 

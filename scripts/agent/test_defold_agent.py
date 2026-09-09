@@ -687,6 +687,19 @@ class ToolQualityTest(unittest.TestCase):
             )
             self.assertEqual("error", failed["status"])
             self.assertTrue(failed["error"]["data"]["atomic"])
+            mixed = dispatch_command(
+                project,
+                "batch_execute",
+                {
+                    "commands": [
+                        {"command": "filesystem_manage", "params": {"op": "write_text", "path": "/main/mixed.txt", "text": "m"}},
+                        {"command": "project_check", "params": {}},
+                    ]
+                },
+                2,
+            )
+            payload = mixed.get("data") or (mixed.get("error") or {}).get("data") or {}
+            self.assertFalse(payload.get("atomic"))
             self.assertTrue(failed["error"]["data"]["rolled_back"])
             self.assertEqual(1, failed["error"]["data"]["failed_index"])
             self.assertFalse((project / "main" / "b.script").is_file())

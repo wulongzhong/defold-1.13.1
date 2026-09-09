@@ -1680,7 +1680,12 @@ def batch_execute_commands(project: Path, params: Dict[str, Any], timeout: float
         if result is not None:
             return result
     editor_open = read_editor_endpoint(project) is not None
-    atomic = not editor_open
+    mixed = any(
+        isinstance(item, dict)
+        and apply_alias(item.get("command"), item.get("params") or {})[0] in BATCH_KEEP_LOCAL
+        for item in commands
+    )
+    atomic = (not editor_open) and (not mixed)
     journal = WriteJournal() if atomic else None
     token = _write_journal.set(journal) if journal is not None else None
     results: List[Any] = []
@@ -2195,4 +2200,13 @@ def dispatch_command(
             result["data"]["engine"] = live_status(project)
             result["data"]["game_status"] = game_status_payload(project)
             result["data"]["ready"] = doctor_payload(project).get("ready") or {}
+    if command == "collection_get_hierarchy" and result.get("status") == "ok" and isinstance(result.get("data"), dict):
+        data = result["data"]
+        children = data.get("children") or []
+        offset = int(data.get("offset") or 0)
+        total = int(data.get("total") or (offset + len(children)))
+        data["offset"] = offset
+        data["limit"] = int(data.get("limit") or len(children) or 1)
+        data["total"] = total
+        data["truncated"] = bool(data["truncated"]) if "truncated" in data else offset + len(children) < total
     return overlay_readiness(project, result)
