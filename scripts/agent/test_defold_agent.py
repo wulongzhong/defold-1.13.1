@@ -386,6 +386,12 @@ class RuntimeSnapshotTest(unittest.TestCase):
             self.assertTrue(any("cube" in str(item) for item in typed["data"]["ids"]))
             listed = query_snapshot(project, {"op": "list"})
             self.assertLessEqual(len(listed["data"]["snapshots"]), 8)
+            globbed = query_snapshot(project, {"op": "list_ids", "id_glob": "*cube*"})
+            self.assertTrue(any("cube" in str(item) for item in globbed["data"]["ids"]))
+            bad_ptr = query_snapshot(project, {"op": "get_path", "path": "scene_graph"})
+            self.assertEqual("INVALID_PARAM", bad_ptr["error"]["code"])
+            missing_ptr = query_snapshot(project, {"op": "get_path"})
+            self.assertEqual("MISSING_PARAM", missing_ptr["error"]["code"])
             hierarchy = __import__("agent_runtime", fromlist=["runtime_get_hierarchy"]).runtime_get_hierarchy(project, {})
             self.assertEqual(200, hierarchy["data"]["limit"])
 
